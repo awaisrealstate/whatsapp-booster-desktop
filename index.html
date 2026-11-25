@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whatsapp Booster With Awais - Desktop Edition</title>
+  <link rel="stylesheet" href="desktop.css">
+</head>
+<body>
+  <div id="app-container">
+    
+    <!-- Top Application Bar -->
+    <header class="app-header">
+      <div class="brand-section">
+        <span class="brand-badge">WB</span>
+        <div class="brand-title">
+          Whatsapp Booster With Awais
+          <span class="brand-tag">Desktop v1.0</span>
+        </div>
+      </div>
+
+      <!-- Center Tabs -->
+      <div class="tab-controls">
+        <button class="tab-btn active" id="tab-dashboard" onclick="switchView('dashboard')">
+          📊 Control Dashboard (کنٹرول پینل)
+        </button>
+        <button class="tab-btn" id="tab-whatsapp" onclick="switchView('whatsapp')">
+          💬 WhatsApp Live View (واٹس ایپ لاگ اِن)
+        </button>
+        <button class="tab-btn" id="tab-split" onclick="switchView('split')">
+          🔲 Split View (دونوں ساتھ)
+        </button>
+      </div>
+
+      <!-- Right Status & Controls -->
+      <div class="header-actions">
+        <div class="conn-pill" id="conn-pill">
+          <span class="conn-dot"></span>
+          <span id="conn-text">Checking WhatsApp...</span>
+        </div>
+        <button class="btn-icon" id="btn-reload-wa" title="Reload WhatsApp Web" onclick="reloadWhatsApp()">
+          🔄 Reload WA
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Viewport -->
+    <div class="viewport-container" id="viewport">
+      <!-- Dashboard Frame -->
+      <iframe id="dashboard-frame" class="view-panel active-panel" src="ui/dashboard.html"></iframe>
+
+      <!-- Embedded WhatsApp Web View with Persistent Profile -->
+      <webview
+        id="wa-webview"
+        class="view-panel"
+        src="https://web.whatsapp.com"
+        partition="persist:whatsapp_booster_session"
+        useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        preload="engine/preload.js"
+        allowpopups
+      ></webview>
+    </div>
+
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    const dashboardFrame = document.getElementById('dashboard-frame');
+    const waWebview = document.getElementById('wa-webview');
+    const viewport = document.getElementById('viewport');
+    const connPill = document.getElementById('conn-pill');
+    const connText = document.getElementById('conn-text');
+
+    let currentView = 'dashboard';
+    let isConnected = false;
+
+    function switchView(view) {
+      currentView = view;
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      viewport.classList.remove('split-mode');
+
+      if (view === 'dashboard') {
+        document.getElementById('tab-dashboard').classList.add('active');
+        dashboardFrame.classList.add('active-panel');
+        waWebview.classList.remove('active-panel');
+      } else if (view === 'whatsapp') {
+        document.getElementById('tab-whatsapp').classList.add('active');
+        dashboardFrame.classList.remove('active-panel');
+        waWebview.classList.add('active-panel');
+      } else if (view === 'split') {
+        document.getElementById('tab-split').classList.add('active');
+        viewport.classList.add('split-mode');
+        dashboardFrame.classList.add('active-panel');
+        waWebview.classList.add('active-panel');
+      }
+    }
+
+    function reloadWhatsApp() {
+      if (waWebview) waWebview.reload();
+    }
+
+    function updateConnectionStatus(statusPayload) {
+      const connected = !!(statusPayload && statusPayload.connected);
+      const needsQR = !!(statusPayload && statusPayload.needsQR);
+      const loading = !!(statusPayload && statusPayload.loading);
+      isConnected = connected;
+
+      if (connected) {
+        connPill.className = 'conn-pill connected';
+        connText.innerText = 'WhatsApp Linked (منسلک ہے)';
+      } else if (needsQR) {
+        connPill.className = 'conn-pill';
+        connText.innerText = 'Scan QR Code (کیو آر اسکین کریں)';
+      } else if (loading) {
+        connPill.className = 'conn-pill';
+        connText.innerText = 'WhatsApp Loading...';
+      } else {
+        connPill.className = 'conn-pill';
+        connText.innerText = 'WhatsApp Offline (لاگ اِن کریں)';
+      }
+
+      // Forward full status to dashboard
+      try {
+        dashboardFrame.contentWindow.postMessage({
+          action: 'HOST_WA_STATUS',
+          status: connected,
+          needsQR,
+          loading
+        }, '*');
+      } catch (e) {}
+    }
+
+    // Webview event listeners
+    waWebview.addEventListener('dom-ready', () => {
+      console.log('WhatsApp Webview DOM Ready.');
+      checkWaStatus();
+    });
+
+    waWebview.addEventListener('ipc-message', (event) => {
+      if (event.channel === 'connection-status') {
+        updateConnectionStatus(event.args[0]);
+      }
+      if (event.channel === 'dispatch-result') {
+        console.log('Received dispatch result from WhatsApp Webview:', event.args[0]);
+        dashboardFrame.contentWindow.postMessage({
+          action: 'HOST_DISPATCH_RESULT',
+          result: event.args[0]
+        }, '*');
+      }
+    });
+
+    function checkWaStatus() {
+      try {
+        waWebview.send('check-connection');
+      } catch (e) {}
+    }
+
+    setInterval(checkWaStatus, 4000);
+
+    // Listen to messages from Dashboard iframe
+    window.addEventListener('message', async (event) => {
+      if (!event.data) return;
+
+      if (event.data.action === 'DESKTOP_EXECUTE_DISPATCH') {
+        console.log('Host received dispatch request for:', event.data.contact);
+        waWebview.send('send-single-message', {
+          contact: event.data.contact,
+          messageText: event.data.messageText,
+          dispatchToken: event.data.dispatchToken,
+          typingDelayMs: event.data.typingDelayMs
+        });
+      }
+
+      if (event.data.action === 'SWITCH_TO_WA_TAB') {
+        switchView('whatsapp');
+      }
+
+      if (event.data.action === 'CHECK_HOST_WA_STATUS') {
+        checkWaStatus();
+      }
+
+      if (event.data.action === 'HOST_LOAD_STATE') {
+        const diskState = await ipcRenderer.invoke('load-campaign-state');
+        const appSettings = await ipcRenderer.invoke('get-app-settings');
+        try {
+          dashboardFrame.contentWindow.postMessage({
+            action: 'HOST_STATE_LOADED',
+            state: diskState,
+            appSettings
+          }, '*');
+        } catch (e) {}
+      }
+
+      if (event.data.action === 'HOST_SAVE_STATE') {
+        await ipcRenderer.invoke('save-campaign-state', event.data.state);
+      }
+
+      if (event.data.action === 'HOST_SET_APP_SETTINGS') {
+        const updated = await ipcRenderer.invoke('set-app-settings', event.data.appSettings);
+        try {
+          dashboardFrame.contentWindow.postMessage({
+            action: 'HOST_APP_SETTINGS_UPDATED',
+            appSettings: updated
+          }, '*');
+        } catch (e) {}
+      }
+
+      if (event.data.action === 'HOST_NOTIFY') {
+        ipcRenderer.send('show-desktop-notification', event.data.payload);
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whatsapp Booster With Awais - Control Center</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <!-- Top Navigation Bar -->
+  <header class="navbar">
+    <div class="nav-brand">
+      <div class="brand-logo">CRM</div>
+      <div class="brand-text">
+        <h1>Whatsapp Booster With Awais</h1>
+        <span class="badge-stealth">🛡️ Ghost Stealth Protocol Active</span>
+      </div>
+    </div>
+    <div class="nav-status">
+      <div class="status-indicator">
+        <span class="pulse-dot" id="system-dot"></span>
+        <span id="system-status-text">System Ready</span>
+      </div>
+      <button class="btn-top-action" id="btn-open-settings">⚙️ Auto Settings (سیٹنگز)</button>
+      <button class="btn-top-action" id="btn-open-wa-tab">📱 WhatsApp Link (واٹس ایپ لنک)</button>
+    </div>
+  </header>
+
+  <!-- Main Dashboard Container -->
+  <main class="dashboard-container">
+    
+    <!-- Dedicated WhatsApp Account Linking & Pairing Card -->
+    <section class="wa-account-card" id="wa-account-card">
+      <div class="wa-account-left">
+        <div class="wa-account-icon" id="wa-status-icon">📱</div>
+        <div class="wa-account-details">
+          <div class="wa-account-title-row">
+            <h3>Sender WhatsApp Account (بھیجنے والا واٹس ایپ اکاؤنٹ)</h3>
+            <span class="badge-conn-status offline" id="badge-wa-conn">Checking...</span>
+          </div>
+          <p id="wa-conn-desc">Checking WhatsApp session... Connecting sender account.</p>
+        </div>
+      </div>
+      <div class="wa-account-right">
+        <button class="btn-wa-connect" id="btn-wa-connect-action">
+          🔗 Link WhatsApp Account (واٹس ایپ منسلک کریں)
+        </button>
+      </div>
+    </section>
+
+    <!-- Top Hero Metric Cards -->
+    <section class="metrics-row">
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-title">Daily Dispatched</span>
+          <span class="metric-icon">🚀</span>
+        </div>
+        <div class="metric-val" id="metric-sent-today">0 / 30</div>
+        <div class="metric-sub" id="metric-batch-label">Batch 1 Active (Anti-Ban Quota)</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-title">Message Cadence</span>
+          <span class="metric-icon">⏱️</span>
+        </div>
+        <div class="metric-val" id="metric-interval-status">60s - 120s</div>
+        <div class="metric-sub" id="metric-interval-sub">Dynamic Random Gap</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-title">Audience Total</span>
+          <span class="metric-icon">📋</span>
+        </div>
+        <div class="metric-val" id="metric-total-contacts">0</div>
+        <div class="metric-sub" id="metric-remaining-label">0 Contacts Pending</div>
+      </div>
+
+      <div class="metric-card" id="card-cooldown-status">
+        <div class="metric-header">
+          <span class="metric-title">Safety Cooldown</span>
+          <span class="metric-icon">⏳</span>
+        </div>
+        <div class="metric-val" id="metric-cooldown-timer">Inactive</div>
+        <div class="metric-sub" id="metric-cooldown-sub">Variable 24h - 28h Protection</div>
+      </div>
+    </section>
+
+    <!-- Cooldown Alert Banner (Active during cooldown) -->
+    <section class="cooldown-banner" id="cooldown-banner" style="display:none;">
+      <div class="cooldown-banner-left">
+        <div class="cooldown-icon">⏳</div>
+        <div>
+          <h3>Variable Anti-Ban Cooldown In Progress</h3>
+          <p id="cooldown-banner-desc">Daily batch completed safely. The system is resting and will auto-resume automatically.</p>
+          <div class="cooldown-resume-info" id="cooldown-resume-info">Next batch auto-resumes from Contact #31</div>
+        </div>
+      </div>
+      <div class="cooldown-banner-right">
+        <div class="digital-clock" id="digital-clock">26:00:00</div>
+        <button class="btn-override" id="btn-skip-cooldown">⚠️ Manual Override (Skip Cooldown)</button>
+      </div>
+    </section>
+
+    <!-- Campaign Completion Banner (Shown when all contacts in list are done) -->
+    <section class="completion-banner" id="completion-banner" style="display:none;">
+      <div class="completion-banner-left">
+        <div class="completion-icon">🎉</div>
+        <div>
+          <h3>All Contacts Completed — Data Cleared! (تمام نمبرز کو میسج بھیج دیا گیا ہے)</h3>
+          <p id="completion-banner-desc">All loaded contacts have been processed safely.</p>
+        </div>
+      </div>
+      <div class="completion-banner-right">
+        <span class="completion-badge" id="completion-watch-badge">👀 Auto-Watch Active</span>
+      </div>
+    </section>
+
+    <!-- Main Grid: Left Column (Controls & Template) + Right Column (Data Hub & Directory) -->
+    <div class="dashboard-grid">
+      
+      <!-- Left Column: Live Controls & Message Template -->
+      <div class="grid-left">
+        
+        <!-- Live Dispatch Controller Card -->
+        <div class="dash-card">
+          <div class="card-title">
+            <h3>⚡ Real-Time Campaign Controller</h3>
+            <span class="badge-tag" id="campaign-badge">IDLE</span>
+          </div>
+
+          <!-- Active Dispatch Progress Bar & Status -->
+          <div class="monitor-area" id="monitor-area">
+            <div class="monitor-status-row">
+              <span id="monitor-status-desc">Ready to dispatch</span>
+              <span class="monitor-timer-badge" id="monitor-next-timer">Next: --</span>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" id="progress-bar-fill"></div>
+            </div>
+            <div class="log-stream" id="log-stream">System initialized and ready.</div>
+          </div>
+
+          <!-- Master Action Controls -->
+          <div class="control-btn-grid">
+            <button class="btn-cta btn-start" id="btn-start">
+              🚀 Launch Daily Batch (30 Contacts)
+            </button>
+            <button class="btn-cta btn-pause" id="btn-pause" style="display:none;">
+              ⏸ Pause Campaign
+            </button>
+            <button class="btn-cta btn-stop" id="btn-stop" style="display:none;">
+              ⏹ Stop Campaign
+            </button>
+          </div>
+        </div>
+
+        <!-- Editable Message Template Card (Editable anytime!) -->
+        <div class="dash-card">
+          <div class="card-title">
+            <h3>💬 Live Message Template (Change Anytime)</h3>
+            <span class="badge-saved" id="badge-template-saved">Saved ✓</span>
+          </div>
+
+          <div class="pill-toolbar">
+            <button class="pill-btn" data-insert="{name}">+ {name}</button>
+            <button class="pill-btn" data-insert="{firstname}">+ {firstname}</button>
+            <button class="pill-btn" data-insert="{phone}">+ {phone}</button>
+            <button class="pill-btn" data-insert="{company}">+ {company}</button>
+            <button class="pill-btn" data-insert="{Hello|Hi|Greetings}">+ Spintax {Hi|Hello}</button>
+          </div>
+
+          <textarea class="template-textarea" id="template-editor" rows="5" placeholder="Enter message text with variables..."></textarea>
+          
+          <div class="preview-group">
+            <span class="preview-label">Live Preview (Next Contact in Queue):</span>
+            <div class="preview-box" id="template-preview-box"></div>
+          </div>
+          <div class="hint-caption">💡 You can edit or change this message anytime — even while the campaign is paused or between messages!</div>
+        </div>
+
+      </div>
+
+      <!-- Right Column: Data Sources & Full Audience Directory -->
+      <div class="grid-right">
+        
+        <!-- Data Sources Card (Google Sheets & Excel) -->
+        <div class="dash-card">
+          <div class="card-title">
+            <h3>📂 Audience Data Hub (Google Sheets & Excel)</h3>
+            <div class="card-actions">
+              <button class="btn-sm" id="btn-load-sample">✨ Load 35 Sample Leads</button>
+              <button class="btn-sm btn-danger-sm" id="btn-clear-contacts">Clear Audience</button>
+            </div>
+          </div>
+
+          <!-- Google Sheet / Web Link Input -->
+          <div class="sheet-sync-row">
+            <input type="text" class="input-modern" id="input-sheet-url" placeholder="Paste Google Sheet or Online Excel share link..." />
+            <button class="btn-sync" id="btn-sync-sheet">🔗 Sync Link</button>
+          </div>
+          
+          <!-- Quick Paste from Excel Toggle -->
+          <div style="display:flex; justify-content:space-between; align-items:center; margin: 8px 0;">
+            <button class="btn-sm" id="btn-toggle-paste" style="background: #202c33; color: #25D366; font-weight:700;">📋 Quick Paste from Excel (Ctrl+V)</button>
+            <span style="font-size:10px; color:#8696a0;">Supports Microsoft 365, OneDrive & Google Docs</span>
+          </div>
+
+          <div id="paste-box-container" style="display:none; background: #111b21; border: 1px solid #2a3942; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+            <div style="font-size: 11px; color: #8696a0; margin-bottom: 6px;">Select cells in Excel / Excel Online, press <strong>Ctrl + C</strong>, and paste (<strong>Ctrl + V</strong>) below:</div>
+            <textarea class="template-textarea" id="paste-textarea" rows="4" placeholder="Paste rows from Excel here...&#10;Ali Khan&#9;03001234567&#10;Usman&#9;+923219876543"></textarea>
+            <div style="text-align: right; margin-top: 6px;">
+              <button class="btn-sync" id="btn-import-pasted">Import Pasted Contacts</button>
+            </div>
+          </div>
+
+          <!-- Excel Dropzone -->
+          <div class="excel-dropzone" id="excel-dropzone">
+            <div class="drop-icon">📊</div>
+            <div class="drop-text">Drag & drop Microsoft Excel (.xlsx, .xls) or CSV here</div>
+            <div class="drop-sub">Click to browse local files</div>
+            <input type="file" id="excel-file-input" accept=".xlsx,.xls,.csv,.txt" style="display:none;" />
+          </div>
+        </div>
+
+        <!-- Comprehensive Audience Directory -->
+        <div class="dash-card">
+          <div class="card-title">
+            <h3>📋 Audience Directory (<span id="audience-count-label">0</span>)</h3>
+            <div style="display:flex; gap:6px;">
+              <button class="btn-sm" id="btn-retry-failed" style="background: rgba(37, 211, 102, 0.15); color: #25D366; border-color: #25D366; font-weight:700;">🔄 Reset & Retry Entire Sheet (تمام نمبرز دوبارہ ری سیٹ کریں)</button>
+              <button class="btn-sm" id="btn-export-csv">📥 Export Delivery Report</button>
+            </div>
+          </div>
+
+          <!-- Filter & Search Toolbar -->
+          <div class="table-toolbar">
+            <input type="text" class="input-modern search-input" id="search-contacts" placeholder="Search contacts by name, phone or company..." />
+            <div class="filter-group">
+              <button class="filter-btn active" data-filter="all">All</button>
+              <button class="filter-btn" data-filter="sent">Sent</button>
+              <button class="filter-btn" data-filter="pending">Pending</button>
+              <button class="filter-btn" data-filter="failed">Failed</button>
+            </div>
+          </div>
+
+          <!-- Contacts Table -->
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 40px;">#</th>
+                  <th>Contact Name</th>
+                  <th>Phone Number</th>
+                  <th>Company / Tag</th>
+                  <th>Delivery Status</th>
+                  <th>Time Dispatched</th>
+                </tr>
+              </thead>
+              <tbody id="audience-tbody">
+                <tr><td colspan="6" class="table-empty">No contacts loaded yet. Connect a Google Sheet or drop an Excel file above.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Auto-Pilot & Campaign Settings Modal -->
+  <div class="modal-overlay" id="settings-modal" style="display:none;">
+    <div class="settings-modal">
+      <div class="modal-header">
+        <div>
+          <h3>⚙️ Autonomous Campaign Settings (خودکار سیٹنگز)</h3>
+          <p>List update hone par bhi progress zero nahi hogi — jahan se chora wahin se chalega.</p>
+        </div>
+        <button class="btn-modal-close" id="btn-close-settings">✕</button>
+      </div>
+
+      <div class="settings-grid">
+        <div class="setting-field">
+          <label for="set-daily-limit">Daily Batch Limit (روزانہ میسج حد)</label>
+          <input type="number" id="set-daily-limit" class="input-modern" min="1" max="500" value="30" />
+        </div>
+
+        <div class="setting-field">
+          <label for="set-country-code">Default Country Code (ملکی کوڈ)</label>
+          <input type="text" id="set-country-code" class="input-modern" value="92" placeholder="92" />
+        </div>
+
+        <div class="setting-field">
+          <label for="set-min-interval">Min Gap Between Messages (Seconds)</label>
+          <input type="number" id="set-min-interval" class="input-modern" min="5" max="3600" value="60" />
+        </div>
+
+        <div class="setting-field">
+          <label for="set-max-interval">Max Gap Between Messages (Seconds)</label>
+          <input type="number" id="set-max-interval" class="input-modern" min="5" max="3600" value="120" />
+        </div>
+
+        <div class="setting-field">
+          <label for="set-min-cooldown">Cooldown Min (Hours)</label>
+          <input type="number" id="set-min-cooldown" class="input-modern" min="1" max="72" step="0.5" value="24" />
+        </div>
+
+        <div class="setting-field">
+          <label for="set-max-cooldown">Cooldown Max (Hours)</label>
+          <input type="number" id="set-max-cooldown" class="input-modern" min="1" max="72" step="0.5" value="28" />
+        </div>
+
+        <div class="setting-field">
+          <label for="set-typing-delay">Typing Delay Before Send (ms)</label>
+          <input type="number" id="set-typing-delay" class="input-modern" min="500" max="15000" step="250" value="2500" />
+        </div>
+
+        <div class="setting-field">
+          <label for="set-sync-interval">Google Sheet Auto-Sync Every (Minutes)</label>
+          <input type="number" id="set-sync-interval" class="input-modern" min="1" max="1440" value="5" />
+        </div>
+      </div>
+
+      <div class="settings-toggles">
+        <label class="toggle-row">
+          <input type="checkbox" id="set-auto-resume-cooldown" checked />
+          <span><strong>Auto-Resume After Cooldown:</strong> Cooldown khatam hote hi agla batch (e.g. 31–60) khud start ho</span>
+        </label>
+
+        <label class="toggle-row">
+          <input type="checkbox" id="set-auto-resume-startup" checked />
+          <span><strong>Auto-Resume On Startup:</strong> App ya PC dobara chalne par jahan chora tha wahin se khud resume ho</span>
+        </label>
+
+        <label class="toggle-row">
+          <input type="checkbox" id="set-auto-sync-sheet" checked />
+          <span><strong>Auto-Update Google Sheet:</strong> Naye numbers khud list mein add hon (purane sent numbers skip rahein)</span>
+        </label>
+
+        <label class="toggle-row">
+          <input type="checkbox" id="set-auto-watch-new" checked />
+          <span><strong>Auto-Dispatch New Additions:</strong> Sheet update hone par naye pending numbers par khud bhejna shuru kare</span>
+        </label>
+
+        <label class="toggle-row">
+          <input type="checkbox" id="set-minimize-tray" checked />
+          <span><strong>Run in Background Tray:</strong> Window close karne par bhi app background tray mein chalti rahe</span>
+        </label>
+
+        <label class="toggle-row">
+          <input type="checkbox" id="set-autostart-boot" />
+          <span><strong>Launch on Windows Startup:</strong> Windows ON hote hi app khud start ho jaye</span>
+        </label>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-sm" id="btn-cancel-settings">Cancel</button>
+        <button class="btn-sync" id="btn-save-settings">💾 Save Settings (محفوظ کریں)</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="lib/xlsx.full.min.js"></script>
+  <script src="lib/csv-parser.js"></script>
+  <script src="bridge.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>
