@@ -1,6 +1,19 @@
+function getDefaultApiBase() {
+  if (
+    typeof window !== 'undefined' &&
+    window.location &&
+    (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost')
+  ) {
+    return 'http://127.0.0.1:8787';
+  }
+  return 'https://wacrm-api.awais-wacrm-2026.workers.dev';
+}
+
 const state = {
-  apiBase: localStorage.getItem('wacrm_api_base') || 'https://wacrm-api.awais-wacrm-2026.workers.dev',
-  token: localStorage.getItem('wacrm_bearer_token') || '',
+  apiBase:
+    (typeof localStorage !== 'undefined' ? localStorage.getItem('wacrm_api_base') : null) ||
+    getDefaultApiBase(),
+  token: typeof localStorage !== 'undefined' ? localStorage.getItem('wacrm_bearer_token') || '' : '',
   organization: null,
   organizations: [],
   role: 'agent',
@@ -701,6 +714,34 @@ function wireEvents() {
     }
   });
 
+  document.getElementById('btn-dev-register')?.addEventListener('click', async () => {
+    try {
+      state.apiBase = document.getElementById('input-api-base').value.trim();
+      const email = document.getElementById('login-email').value.trim();
+      const password = document.getElementById('login-password').value;
+      if (!email || password.length < 8) {
+        return showBanner('Enter a valid email and password (at least 8 characters) to register locally.', true);
+      }
+      const res = await apiFetch('/api/v1/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({
+          email,
+          name: email.split('@')[0] || 'Local User',
+          password,
+          clientType: 'web'
+        })
+      });
+      state.token = res.token;
+      document.getElementById('input-bearer-token').value = res.token;
+      localStorage.setItem('wacrm_api_base', state.apiBase);
+      localStorage.setItem('wacrm_bearer_token', res.token);
+      await refreshAllData();
+      showBanner('Local dev account created and signed in. You can now click Generate QR Code.');
+    } catch (err) {
+      showBanner(err.message, true);
+    }
+  });
+
   document.getElementById('btn-signout').addEventListener('click', async () => {
     try { await apiFetch('/api/v1/auth/logout', { method: 'POST' }); } catch {}
     state.token = '';
@@ -734,11 +775,30 @@ function wireEvents() {
     }
   }
 
+  function showQrBoxError(msg) {
+    showBanner(msg, true);
+    const errEl = document.getElementById('qr-error-box');
+    const pill = document.getElementById('qr-status-pill');
+    if (pill) {
+      pill.textContent = 'Error';
+      pill.className = 'badge-warn';
+    }
+    if (errEl) {
+      errEl.textContent = msg;
+      errEl.style.display = 'block';
+    }
+  }
+
   function startQrPolling(accountId) {
     stopQrTimers();
     state.activeQrAccountId = accountId;
     const status = state.qrSession?.status;
     if (status && ['connecting', 'waiting_for_scan'].includes(status)) {
+      setTimeout(() => {
+        if (state.token && state.activeQrAccountId === accountId) {
+          void syncQrStatusOnce(accountId);
+        }
+      }, 700);
       state.qrPollTimer = setInterval(() => {
         if (state.token && document.visibilityState === 'visible') {
           void syncQrStatusOnce(accountId);
@@ -794,6 +854,11 @@ function wireEvents() {
   });
 
   document.getElementById('btn-qr-start').addEventListener('click', async () => {
+    if (!state.token) {
+      return showQrBoxError(
+        'Sign in first before generating a QR code: use Google OAuth2 (production) or Dev Login → Create Local Account / Sign In (localhost).'
+      );
+    }
     try {
       const label = document.getElementById('qr-account-label').value.trim() || 'WhatsApp Web QR (Unofficial)';
       const res = await apiFetch('/api/v1/whatsapp/accounts/qr/start', {
@@ -807,7 +872,7 @@ function wireEvents() {
       state.qrSession = res.session || res.account.qrSession || null;
       await refreshAllData();
       startQrPolling(res.account.id);
-    } catch (err) { showBanner(err.message, true); }
+    } catch (err) { showQrBoxError(err.message); }
   });
 
   document.getElementById('btn-qr-refresh').addEventListener('click', async () => {
@@ -817,7 +882,7 @@ function wireEvents() {
       state.qrSession = res.session || res.account?.qrSession || null;
       await refreshAllData();
       startQrPolling(state.activeQrAccountId);
-    } catch (err) { showBanner(err.message, true); }
+    } catch (err) { showQrBoxError(err.message); }
   });
 
   document.getElementById('btn-qr-reconnect').addEventListener('click', async () => {
@@ -827,7 +892,7 @@ function wireEvents() {
       state.qrSession = res.session || res.account?.qrSession || null;
       await refreshAllData();
       startQrPolling(state.activeQrAccountId);
-    } catch (err) { showBanner(err.message, true); }
+    } catch (err) { showQrBoxError(err.message); }
   });
 
   document.getElementById('btn-qr-disconnect').addEventListener('click', async () => {
@@ -838,7 +903,7 @@ function wireEvents() {
       state.qrSession = res.session || res.account?.qrSession || null;
       await refreshAllData();
       showBanner('Unofficial QR session disconnected.');
-    } catch (err) { showBanner(err.message, true); }
+    } catch (err) { showQrBoxError(err.message); }
   });
 
   document.getElementById('form-add-contact').addEventListener('submit', async (e) => {

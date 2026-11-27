@@ -190,4 +190,130 @@ describe('Node.js @wacrm/qr-service Encrypted Persistence, Isolation & Lifecycle
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it('rejects wrong encryption key cleanly without wiping disk session, handles 515 restartRequired after QR scan, recovers persisted sessions on restart, handles @lid remoteJidAlt inbound & expires stale QR', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wacrm-qr-adv-'));
+    const secret = 'qr-bridge-hmac-secret-32-chars!!';
+    const key1 = 'encryption-key-one-32-chars-strong!';
+    const key2 = 'encryption-key-two-different-strong!';
+
+    try {
+      // 1. Wrong encryption key MUST throw/refuse without wiping existing encrypted session
+      const store1 = new EncryptedSessionStore({ rootDir: tmpDir, encryptionKey: key1 });
+      const loaded1 = await store1.loadAuthState('org_sec', 'acc_sec');
+      loaded1.state.creds.me = { id: '923111223344:2@s.whatsapp.net', name: 'SecPhone' };
+      loaded1.state.creds.registered = true;
+      await loaded1.saveCreds();
+
+      const wrongKeyStore = new EncryptedSessionStore({ rootDir: tmpDir, encryptionKey: key2 });
+      await assert.rejects(
+        () => wrongKeyStore.loadAuthState('org_sec', 'acc_sec'),
+        /Failed to decrypt persisted QR session/
+      );
+      assert.equal(await store1.hasSessionFile('org_sec', 'acc_sec'), true);
+
+      // 2. Real Baileys 515 restartRequired right after QR scan + @lid remoteJidAlt + QR expiry + restart recovery
+      const createdSockets: MockBaileysSocket[] = [];
+      const inboundWebhooks: Array<Record<string, unknown>> = [];
+
+      const makeHandle = () =>
+        createQrServiceServer({
+          bridgeSecret: secret,
+          encryptionKey: key1,
+          storageDir: tmpDir,
+          webhookUrl: 'http://mock.local/webhooks/qr-bridge',
+          qrTtlMs: 300,
+          socketFactory: async () => {
+            const s = new MockBaileysSocket();
+            createdSockets.push(s);
+            return s;
+          },
+          fetchFn: async (_url, init) => {
+            inboundWebhooks.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+            return new Response(JSON.stringify({ ok: true }), { status: 200 });
+          }
+        });
+
+      const srvA = makeHandle();
+      await srvA.manager.startSession('org_qr', 'acc_qr');
+      const sockPair = createdSockets[0]!;
+      sockPair.emitter.emit('connection.update', { qr: '2@initial-pairing-qr' });
+      let waitingSnap = await srvA.manager.getSessionStatus('org_qr', 'acc_qr');
+      for (let i = 0; i < 20 && waitingSnap.status !== 'waiting_for_scan'; i++) {
+        await new Promise((r) => setTimeout(r, 20));
+        waitingSnap = await srvA.manager.getSessionStatus('org_qr', 'acc_qr');
+      }
+      assert.equal(waitingSnap.status, 'waiting_for_scan');
+
+      // Wait for short QR TTL expiry
+      await new Promise((r) => setTimeout(r, 340));
+      const expired = await srvA.manager.getSessionStatus('org_qr', 'acc_qr');
+      assert.equal(expired.status, 'expired');
+
+      // Refresh QR and simulate real scan -> creds.update + 515 restartRequired -> second socket opens
+      await srvA.manager.refreshSession('org_qr', 'acc_qr');
+      const sockFresh = createdSockets[1]!;
+      sockFresh.user = { id: '923229998877:5@s.whatsapp.net', name: 'TestScan' };
+      sockFresh.emitter.emit('creds.update', {});
+      await new Promise((r) => setTimeout(r, 30));
+      sockFresh.emitter.emit('connection.update', {
+        connection: 'close',
+        lastDisconnect: {
+          error: Object.assign(new Error('Stream Errored (restart required)'), {
+            output: { statusCode: DisconnectReason.restartRequired }
+          }),
+          date: new Date()
+        }
+      });
+
+      // Wait for automatic 400ms post-515 reconnect
+      for (let i = 0; i < 25 && !createdSockets[2]; i++) {
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      const sockPaired = createdSockets[2];
+      assert.ok(sockPaired, 'Post-QR 515 restartRequired must open follow-up paired socket instead of failing');
+      sockPaired.user = { id: '923229998877:5@s.whatsapp.net', name: 'TestScan' };
+      sockPaired.emitter.emit('connection.update', { connection: 'open' });
+      await new Promise((r) => setTimeout(r, 40));
+
+      const connectedAfter515 = await srvA.manager.getSessionStatus('org_qr', 'acc_qr');
+      assert.equal(connectedAfter515.status, 'connected');
+      assert.equal(connectedAfter515.phoneNumber, '+923229998877');
+
+      // Baileys v7 @lid DM with remoteJidAlt phone fallback
+      sockPaired.emitter.emit('messages.upsert', {
+        type: 'notify',
+        messages: [
+          {
+            key: {
+              id: 'lid_msg_1',
+              fromMe: false,
+              remoteJid: '198765432101234@lid',
+              remoteJidAlt: '923005556677@s.whatsapp.net'
+            },
+            pushName: 'Lid Contact',
+            message: { conversation: 'Hello from LID' }
+          }
+        ]
+      });
+      await new Promise((r) => setTimeout(r, 30));
+      const lidWebhook = inboundWebhooks.find((e) => e.eventType === 'inbound_message');
+      assert.ok(lidWebhook);
+      assert.equal(lidWebhook.fromPhone, '+923005556677');
+
+      // 3. Simulated process restart: fresh QrSessionManager recovers org_sec + org_qr persisted sessions
+      const srvB = makeHandle();
+      const restored = await srvB.manager.restorePersistedSessions();
+      assert.equal(restored.restored, 2);
+      const afterRestartStatus = await srvB.manager.getSessionStatus('org_qr', 'acc_qr');
+      assert.equal(afterRestartStatus.phoneNumber, '+923229998877');
+
+      // Clean up timers
+      await srvA.manager.disconnectSession('org_qr', 'acc_qr');
+      await srvB.manager.disconnectSession('org_sec', 'acc_sec');
+      await srvB.manager.disconnectSession('org_qr', 'acc_qr');
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

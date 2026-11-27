@@ -44,9 +44,10 @@
     </div>
     <div id="dev-login-panel" class="dev-login-panel" style="display:none;">
       <input type="email" id="login-email" class="input-modern" placeholder="Email" />
-      <input type="password" id="login-password" class="input-modern" placeholder="Password" />
+      <input type="password" id="login-password" class="input-modern" placeholder="Password (min 8 chars)" />
       <button class="btn-primary" id="btn-dev-login">Sign In (Dev Only)</button>
-      <span class="muted-note">Password login stays gated OFF until Cloudflare Worker 10ms CPU compliance is verified; OAuth2 PKCE is preferred.</span>
+      <button class="btn-secondary" id="btn-dev-register">Create Local Account (Dev)</button>
+      <span class="muted-note">Password login stays gated OFF in Cloudflare Workers production; OAuth2 PKCE is preferred.</span>
     </div>
     <div id="global-banner" class="banner" style="display:none;"></div>
   </section>
@@ -250,7 +251,12 @@
       <!-- 6. WHATSAPP CONNECTION (OPTION A: META CLOUD API + OPTION B: UNOFFICIAL QR CODE) -->
       <section class="view-panel" id="view-whatsapp">
         <div class="compliance-banner" id="qr-compliance-banner">
-          <strong>Important Compliance Notice:</strong> Option B (QR Code / WhatsApp Web login) uses an <strong>unofficial protocol</strong> and is <strong>NOT</strong> the Official Meta WhatsApp Cloud API. Unofficial QR sessions may experience disconnections, restrictions, or WhatsApp account bans. We strongly recommend testing QR login on a separate test WhatsApp number first and using <strong>Option A (Official Meta API)</strong> for production business messaging.
+          <strong>Important Compliance Notice — Unofficial WhatsApp Web Session – Baileys:</strong> Option B (QR Code / WhatsApp Web login) uses an <strong>unofficial protocol</strong> and is <strong>NOT</strong> the Official Meta WhatsApp Cloud API. Risks include:
+          <span><strong>Session disconnection</strong></span>,
+          <span><strong>Compatibility changes</strong></span>,
+          <span><strong>WhatsApp account restrictions</strong></span>, and
+          <span><strong>Potential account bans</strong></span>.
+          Use a separate test WhatsApp number for QR testing, and use <strong>Option A (Official Meta API)</strong> for production business messaging.
         </div>
 
         <div class="grid-two">
@@ -286,7 +292,7 @@
                 <h3>Option B: Connect Using QR Code</h3>
                 <div class="muted-note">WhatsApp → Linked Devices → Link a Device (Test number recommended)</div>
               </div>
-              <span class="badge-warn">Unofficial Web Session</span>
+              <span class="badge-warn">Unofficial WhatsApp Web Session – Baileys</span>
             </div>
 
             <div class="stack-form">

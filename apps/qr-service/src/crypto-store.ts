@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   BufferJSON,
   initAuthCreds,
+  proto,
   type AuthenticationCreds,
   type AuthenticationState,
   type SignalDataSet,
@@ -12,10 +13,25 @@ import {
 
 const SAFE_ID_RE = /^[a-zA-Z0-9_-]{3,96}$/;
 
+export interface PersistedSessionSummary {
+  organizationId: string;
+  whatsappAccountId: string;
+  hasExistingCreds: boolean;
+  phoneNumber: string | null;
+}
+
 interface PersistedSessionEnvelope {
   version: 1;
   creds: AuthenticationCreds;
   keys: Record<string, Record<string, unknown>>;
+}
+
+function jidToPhoneNumber(jid: string | null | undefined): string | null {
+  if (!jid) return null;
+  const userPart = jid.split('@')[0]?.split(':')[0] ?? '';
+  const digits = userPart.replace(/\D/g, '');
+  if (digits.length < 8 || digits.length > 15) return null;
+  return `+${digits}`;
 }
 
 function assertSafeIdentifier(value: string, label: string): string {
@@ -86,6 +102,65 @@ export class EncryptedSessionStore {
     }
   }
 
+  async listPersistedSessionKeys(): Promise<Array<{ organizationId: string; whatsappAccountId: string }>> {
+    const results: Array<{ organizationId: string; whatsappAccountId: string }> = [];
+    let orgEntries: import('node:fs').Dirent[];
+    try {
+      orgEntries = await fs.readdir(this.rootDir, { withFileTypes: true });
+    } catch (err) {
+      if ((err as { code?: string } | null)?.code === 'ENOENT') return results;
+      throw err;
+    }
+
+    for (const orgEntry of orgEntries) {
+      if (!orgEntry.isDirectory() || !SAFE_ID_RE.test(orgEntry.name)) continue;
+      const orgDir = path.join(this.rootDir, orgEntry.name);
+      let accEntries: import('node:fs').Dirent[];
+      try {
+        accEntries = await fs.readdir(orgDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const accEntry of accEntries) {
+        if (!accEntry.isDirectory() || !SAFE_ID_RE.test(accEntry.name)) continue;
+        const encFile = path.join(orgDir, accEntry.name, 'session.enc.json');
+        try {
+          await fs.access(encFile);
+          results.push({ organizationId: orgEntry.name, whatsappAccountId: accEntry.name });
+        } catch {
+          // Directory exists without finalized encrypted session file
+        }
+      }
+    }
+    return results;
+  }
+
+  async readPersistedSummary(
+    organizationId: string,
+    whatsappAccountId: string
+  ): Promise<PersistedSessionSummary | null> {
+    const filePath = this.getSessionFilePath(organizationId, whatsappAccountId);
+    let cipherText: string;
+    try {
+      cipherText = await fs.readFile(filePath, 'utf8');
+    } catch (err) {
+      if ((err as { code?: string } | null)?.code === 'ENOENT') return null;
+      throw err;
+    }
+
+    const plain = this.decryptPayload(cipherText);
+    const parsed = JSON.parse(plain, BufferJSON.reviver) as PersistedSessionEnvelope;
+    if (!parsed || parsed.version !== 1 || !parsed.creds) {
+      throw new Error('Corrupted encrypted QR session envelope.');
+    }
+    return {
+      organizationId,
+      whatsappAccountId,
+      hasExistingCreds: Boolean(parsed.creds.registered || parsed.creds.me?.id),
+      phoneNumber: jidToPhoneNumber(parsed.creds.me?.id)
+    };
+  }
+
   async readRawEncryptedBlob(organizationId: string, whatsappAccountId: string): Promise<string | null> {
     const filePath = this.getSessionFilePath(organizationId, whatsappAccountId);
     try {
@@ -148,18 +223,23 @@ export class EncryptedSessionStore {
       const cipherText = await fs.readFile(filePath, 'utf8');
       const plain = this.decryptPayload(cipherText);
       const parsed = JSON.parse(plain, BufferJSON.reviver) as PersistedSessionEnvelope;
-      if (parsed && parsed.version === 1 && parsed.creds) {
-        envelope = {
-          version: 1,
-          creds: parsed.creds,
-          keys: parsed.keys && typeof parsed.keys === 'object' ? parsed.keys : {}
-        };
-        hasExistingCreds = Boolean(parsed.creds.registered || parsed.creds.me?.id);
-      } else {
-        envelope = { version: 1, creds: initAuthCreds(), keys: {} };
+      if (!parsed || parsed.version !== 1 || !parsed.creds) {
+        throw new Error('Corrupted encrypted QR session envelope.');
       }
-    } catch {
-      envelope = { version: 1, creds: initAuthCreds(), keys: {} };
+      envelope = {
+        version: 1,
+        creds: parsed.creds,
+        keys: parsed.keys && typeof parsed.keys === 'object' ? parsed.keys : {}
+      };
+      hasExistingCreds = Boolean(parsed.creds.registered || parsed.creds.me?.id);
+    } catch (err) {
+      if ((err as { code?: string } | null)?.code === 'ENOENT') {
+        envelope = { version: 1, creds: initAuthCreds(), keys: {} };
+      } else {
+        throw new Error(
+          `Failed to decrypt persisted QR session for ${organizationId}:${whatsappAccountId}. Check QR_SESSION_ENCRYPTION_KEY.`
+        );
+      }
     }
 
     const state: AuthenticationState = {
@@ -171,7 +251,11 @@ export class EncryptedSessionStore {
           for (const id of ids) {
             const val = bucket[id];
             if (val !== undefined && val !== null) {
-              result[id] = val as SignalDataTypeMap[T];
+              const normalized =
+                type === 'app-state-sync-key' && typeof val === 'object'
+                  ? proto.Message.AppStateSyncKeyData.fromObject(val as Record<string, unknown>)
+                  : val;
+              result[id] = normalized as SignalDataTypeMap[T];
             }
           }
           return result;

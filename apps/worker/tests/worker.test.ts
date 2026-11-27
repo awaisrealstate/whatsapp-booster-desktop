@@ -130,5 +130,25 @@ describe('Cloudflare Worker Cron (scheduled) & Queue Consumer', () => {
     const updatedCamp = (await getCampaignById(db, ctx, camp.id))!;
     assert.equal(updatedCamp.status, 'completed');
     assert.equal(updatedCamp.sentCount, 1);
+
+    const healthRes = await handlers.fetch(new Request('https://engine.local/health'), {
+      DB: d1,
+      JOBS_QUEUE: mockQueue,
+      ENCRYPTION_KEY: ENC_KEY
+    });
+    assert.equal(healthRes.status, 200);
+    const healthJson = (await healthRes.json()) as {
+      ok: boolean;
+      service: string;
+      bindings: { database: boolean; queue: boolean; encryptionConfigured: boolean };
+    };
+    assert.equal(healthJson.ok, true);
+    assert.equal(healthJson.service, 'wacrm-engine');
+    assert.equal(healthJson.bindings.database, true);
+    assert.equal(healthJson.bindings.queue, true);
+    assert.equal(healthJson.bindings.encryptionConfigured, true);
+
+    const notFoundRes = await handlers.fetch(new Request('https://engine.local/unknown'), {});
+    assert.equal(notFoundRes.status, 404);
   });
 });

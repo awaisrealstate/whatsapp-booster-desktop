@@ -1,3 +1,4 @@
+import fsSync from 'node:fs';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -259,16 +260,36 @@ const isEntryPoint =
   process.argv[1] &&
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 
+function loadLocalEnvFile(envPath: string): void {
+  if (!fsSync.existsSync(envPath)) return;
+  const raw = fsSync.readFileSync(envPath, 'utf8');
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx <= 0) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    let val = trimmed.slice(eqIdx + 1).trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    if (key && process.env[key] === undefined) {
+      process.env[key] = val;
+    }
+  }
+}
+
 if (isEntryPoint) {
+  loadLocalEnvFile(path.resolve(process.cwd(), '.env'));
   const port = Number(process.env.PORT ?? 8790) || 8790;
-  const host = process.env.HOST?.trim() || '0.0.0.0';
+  const host = process.env.HOST?.trim() || '127.0.0.1';
   const bridgeSecret = process.env.QR_BRIDGE_SECRET?.trim() || '';
   const encryptionKey = process.env.QR_SESSION_ENCRYPTION_KEY?.trim() || '';
   const storageDir = process.env.QR_STORAGE_DIR?.trim() || path.resolve(process.cwd(), 'qr_data');
   const webhookUrl = process.env.API_WEBHOOK_URL?.trim() || null;
   const qrTtlMs = Number(process.env.QR_TTL_MS ?? 60_000) || 60_000;
 
-  const { server } = createQrServiceServer({
+  const { server, manager } = createQrServiceServer({
     bridgeSecret,
     encryptionKey,
     storageDir,
@@ -278,5 +299,17 @@ if (isEntryPoint) {
 
   server.listen(port, host, () => {
     console.log(`[wacrm-qr-service] Listening on http://${host}:${port} (encrypted storage: ${storageDir})`);
+    void manager
+      .restorePersistedSessions()
+      .then((res) => {
+        if (res.restored > 0 || res.failed > 0) {
+          console.log(
+            `[wacrm-qr-service] Session recovery complete: restored=${res.restored}, skipped=${res.skipped}, failed=${res.failed}`
+          );
+        }
+      })
+      .catch((err) => {
+        console.warn('[wacrm-qr-service] Startup session recovery error:', err instanceof Error ? err.message : String(err));
+      });
   });
 }

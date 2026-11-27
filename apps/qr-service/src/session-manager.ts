@@ -98,6 +98,7 @@ export class QrSessionManager {
   private readonly webhookUrl: string | null;
   private readonly fetchFn: typeof fetch;
   private readonly sessions = new Map<string, ManagedSession>();
+  private readonly opLocks = new Map<string, Promise<unknown>>();
   private readonly logger = pino({ level: 'info' });
 
   constructor(options: {
@@ -119,7 +120,9 @@ export class QrSessionManager {
         let version: [number, number, number] | undefined;
         try {
           const v = await fetchLatestWaWebVersion({});
-          version = v.version;
+          if (!v.error && Array.isArray(v.version) && v.version.length === 3) {
+            version = v.version as [number, number, number];
+          }
         } catch {
           // Baileys falls back to bundled version if metadata endpoint unreachable
         }
@@ -133,6 +136,13 @@ export class QrSessionManager {
           markOnlineOnConnect: false
         }) as unknown as MinimalWaSocket;
       });
+  }
+
+  private withSessionLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.opLocks.get(key) ?? Promise.resolve();
+    const next = prev.catch(() => undefined).then(fn);
+    this.opLocks.set(key, next);
+    return next;
   }
 
   getActiveSessionCount(): number {
@@ -248,6 +258,13 @@ export class QrSessionManager {
       return this.toSnapshot(session);
     }
 
+    if (mode !== 'reconnect') {
+      session.reconnectAttempts = 0;
+    }
+    session.phoneNumber =
+      mode === 'refresh'
+        ? null
+        : (extractPhoneFromJid(loaded.state.creds.me?.id) ?? session.phoneNumber);
     session.status = 'connecting';
     session.manuallyDisconnected = false;
     session.qrDataUrl = null;
@@ -328,6 +345,10 @@ export class QrSessionManager {
           update.lastDisconnect?.error instanceof Error
             ? update.lastDisconnect.error.message
             : 'WhatsApp Web connection closed.';
+        const hasPersistedCreds = Boolean(
+          loaded.hasExistingCreds || loaded.state.creds.me?.id || loaded.state.creds.registered
+        );
+        const isRestartRequired = statusCode === DisconnectReason.restartRequired;
 
         if (cur.manuallyDisconnected) {
           cur.status = 'disconnected';
@@ -338,18 +359,31 @@ export class QrSessionManager {
           cur.status = 'disconnected';
           cur.qrDataUrl = null;
           cur.qrExpiresAt = null;
+          cur.phoneNumber = null;
           cur.lastError = 'Session logged out from WhatsApp phone Linked Devices. Scan QR again.';
         } else if (
-          loaded.hasExistingCreds &&
+          (isRestartRequired || hasPersistedCreds) &&
           cur.reconnectAttempts < 3 &&
           statusCode !== DisconnectReason.forbidden
         ) {
+          if (sock.user?.id && !loaded.state.creds.me) {
+            loaded.state.creds.me = { id: sock.user.id, name: sock.user.name };
+          }
+          try {
+            await loaded.saveCreds();
+          } catch {
+            // Preserve best-effort save before restart reconnect
+          }
           cur.reconnectAttempts += 1;
           cur.status = 'connecting';
-          cur.lastError = `Reconnecting (${cur.reconnectAttempts}/3): ${reasonText}`;
-          const backoffMs = Math.min(2000 * cur.reconnectAttempts, 10_000);
+          cur.qrDataUrl = null;
+          cur.qrExpiresAt = null;
+          cur.lastError = isRestartRequired
+            ? 'Finishing WhatsApp Web pairing handshake...'
+            : `Reconnecting (${cur.reconnectAttempts}/3): ${reasonText}`;
+          const backoffMs = isRestartRequired ? 400 : Math.min(2000 * cur.reconnectAttempts, 10_000);
           cur.reconnectTimer = setTimeout(() => {
-            void this.openSocket(organizationId, whatsappAccountId, 'reconnect');
+            void this.reconnectSession(organizationId, whatsappAccountId);
           }, backoffMs);
         } else {
           cur.status = 'error';
@@ -369,11 +403,17 @@ export class QrSessionManager {
       if (upsert.type !== 'notify') return;
       for (const msg of upsert.messages ?? []) {
         if (!msg.key || msg.key.fromMe) continue;
-        const remoteJid = msg.key.remoteJid ?? '';
-        if (!remoteJid.endsWith('@s.whatsapp.net')) continue;
+        const primaryJid = msg.key.remoteJid ?? '';
+        const altJid = msg.key.remoteJidAlt ?? '';
+        const resolvedJid = primaryJid.endsWith('@s.whatsapp.net')
+          ? primaryJid
+          : altJid.endsWith('@s.whatsapp.net')
+            ? altJid
+            : '';
+        if (!resolvedJid) continue;
         const body = extractMessageBody(msg);
         if (!body) continue;
-        const fromPhone = extractPhoneFromJid(remoteJid);
+        const fromPhone = extractPhoneFromJid(resolvedJid);
         if (!fromPhone) continue;
 
         const providerMessageId = msg.key.id || crypto.randomUUID();
@@ -395,15 +435,50 @@ export class QrSessionManager {
   }
 
   startSession(organizationId: string, whatsappAccountId: string): Promise<QrSessionSnapshot> {
-    return this.openSocket(organizationId, whatsappAccountId, 'start');
+    return this.withSessionLock(sessionKey(organizationId, whatsappAccountId), () =>
+      this.openSocket(organizationId, whatsappAccountId, 'start')
+    );
   }
 
   refreshSession(organizationId: string, whatsappAccountId: string): Promise<QrSessionSnapshot> {
-    return this.openSocket(organizationId, whatsappAccountId, 'refresh');
+    return this.withSessionLock(sessionKey(organizationId, whatsappAccountId), () =>
+      this.openSocket(organizationId, whatsappAccountId, 'refresh')
+    );
   }
 
   reconnectSession(organizationId: string, whatsappAccountId: string): Promise<QrSessionSnapshot> {
-    return this.openSocket(organizationId, whatsappAccountId, 'reconnect');
+    return this.withSessionLock(sessionKey(organizationId, whatsappAccountId), () =>
+      this.openSocket(organizationId, whatsappAccountId, 'reconnect')
+    );
+  }
+
+  async restorePersistedSessions(): Promise<{ restored: number; skipped: number; failed: number }> {
+    const keys = await this.store.listPersistedSessionKeys();
+    let restored = 0;
+    let skipped = 0;
+    let failed = 0;
+    for (const { organizationId, whatsappAccountId } of keys) {
+      try {
+        const summary = await this.store.readPersistedSummary(organizationId, whatsappAccountId);
+        if (!summary?.hasExistingCreds) {
+          skipped++;
+          continue;
+        }
+        await this.reconnectSession(organizationId, whatsappAccountId);
+        restored++;
+      } catch (err) {
+        failed++;
+        this.logger.warn(
+          {
+            organizationId,
+            whatsappAccountId,
+            err: err instanceof Error ? err.message : String(err)
+          },
+          'Failed to restore persisted QR session on startup'
+        );
+      }
+    }
+    return { restored, skipped, failed };
   }
 
   async getSessionStatus(organizationId: string, whatsappAccountId: string): Promise<QrSessionSnapshot> {
@@ -413,56 +488,71 @@ export class QrSessionManager {
       return this.toSnapshot(existing);
     }
 
-    const hasPersisted = await this.store.hasSessionFile(organizationId, whatsappAccountId);
-    return {
-      organizationId,
-      whatsappAccountId,
-      status: 'disconnected',
-      qrDataUrl: null,
-      qrExpiresAt: null,
-      phoneNumber: null,
-      lastConnectedAt: null,
-      lastError: hasPersisted
-        ? 'Persisted encrypted session on disk is offline. Click Reconnect.'
-        : null
-    };
+    try {
+      const persisted = await this.store.readPersistedSummary(organizationId, whatsappAccountId);
+      return {
+        organizationId,
+        whatsappAccountId,
+        status: 'disconnected',
+        qrDataUrl: null,
+        qrExpiresAt: null,
+        phoneNumber: persisted?.phoneNumber ?? null,
+        lastConnectedAt: null,
+        lastError: persisted?.hasExistingCreds
+          ? 'Persisted encrypted session on disk is offline. Click Reconnect.'
+          : null
+      };
+    } catch (err) {
+      return {
+        organizationId,
+        whatsappAccountId,
+        status: 'error',
+        qrDataUrl: null,
+        qrExpiresAt: null,
+        phoneNumber: null,
+        lastConnectedAt: null,
+        lastError: err instanceof Error ? err.message : 'Unable to decrypt persisted session.'
+      };
+    }
   }
 
   async disconnectSession(organizationId: string, whatsappAccountId: string): Promise<QrSessionSnapshot> {
-    const key = sessionKey(organizationId, whatsappAccountId);
-    const cur = this.sessions.get(key);
-    if (cur) {
-      cur.manuallyDisconnected = true;
-      this.clearTimers(cur);
-      if (cur.socket) {
-        try {
-          await cur.socket.logout?.();
-        } catch {}
-        try {
-          cur.socket.end?.();
-        } catch {}
-        cur.socket = null;
+    return this.withSessionLock(sessionKey(organizationId, whatsappAccountId), async () => {
+      const key = sessionKey(organizationId, whatsappAccountId);
+      const cur = this.sessions.get(key);
+      if (cur) {
+        cur.manuallyDisconnected = true;
+        this.clearTimers(cur);
+        if (cur.socket) {
+          try {
+            await cur.socket.logout?.();
+          } catch {}
+          try {
+            cur.socket.end?.();
+          } catch {}
+          cur.socket = null;
+        }
+        cur.status = 'disconnected';
+        cur.qrDataUrl = null;
+        cur.qrExpiresAt = null;
+        cur.lastError = null;
       }
-      cur.status = 'disconnected';
-      cur.qrDataUrl = null;
-      cur.qrExpiresAt = null;
-      cur.lastError = null;
-    }
 
-    await this.store.clearSession(organizationId, whatsappAccountId);
+      await this.store.clearSession(organizationId, whatsappAccountId);
 
-    const snapshot: QrSessionSnapshot = {
-      organizationId,
-      whatsappAccountId,
-      status: 'disconnected',
-      qrDataUrl: null,
-      qrExpiresAt: null,
-      phoneNumber: cur?.phoneNumber ?? null,
-      lastConnectedAt: cur?.lastConnectedAt ?? null,
-      lastError: null
-    };
-    await this.postSignedWebhook({ eventType: 'session_update', ...snapshot });
-    return snapshot;
+      const snapshot: QrSessionSnapshot = {
+        organizationId,
+        whatsappAccountId,
+        status: 'disconnected',
+        qrDataUrl: null,
+        qrExpiresAt: null,
+        phoneNumber: cur?.phoneNumber ?? null,
+        lastConnectedAt: cur?.lastConnectedAt ?? null,
+        lastError: null
+      };
+      await this.postSignedWebhook({ eventType: 'session_update', ...snapshot });
+      return snapshot;
+    });
   }
 
   async sendTextMessage(input: {

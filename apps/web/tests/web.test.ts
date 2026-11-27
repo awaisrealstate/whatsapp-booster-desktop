@@ -43,7 +43,11 @@ describe('Cloud CRM Web Dashboard (apps/web) 15-module coverage & security hygie
     assert.ok(html.includes('Option A: Meta Official Cloud API'));
     assert.ok(html.includes('Option B: Connect Using QR Code'));
     assert.ok(html.includes('Official Meta API'));
-    assert.ok(html.includes('Unofficial Web Session'));
+    assert.ok(html.includes('Unofficial WhatsApp Web Session – Baileys'));
+    assert.ok(html.includes('Session disconnection'));
+    assert.ok(html.includes('Compatibility changes'));
+    assert.ok(html.includes('WhatsApp account restrictions'));
+    assert.ok(html.includes('Potential account bans'));
     assert.ok(html.includes('qr-compliance-banner'));
     assert.ok(html.includes('btn-qr-refresh'));
     assert.ok(html.includes('btn-qr-reconnect'));

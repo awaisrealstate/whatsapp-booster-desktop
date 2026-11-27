@@ -111,6 +111,33 @@ export function createWorkerHandlers(options: EngineHandlerOptions = {}) {
           msg.retry();
         }
       }
+    },
+
+    async fetch(request: Request, env: WorkerEngineEnv): Promise<Response> {
+      const url = new URL(request.url);
+      if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
+        return Response.json(
+          {
+            ok: true,
+            service: 'wacrm-engine',
+            mode: 'cron_and_queue_worker',
+            bindings: {
+              database: Boolean(env.DB),
+              queue: Boolean(env.JOBS_QUEUE),
+              ai: Boolean(env.AI),
+              encryptionConfigured: Boolean(env.ENCRYPTION_KEY && env.ENCRYPTION_KEY.trim().length >= 16),
+              qrBridgeConfigured: Boolean(
+                env.QR_BRIDGE_URL?.trim() && env.QR_BRIDGE_SECRET && env.QR_BRIDGE_SECRET.trim().length >= 16
+              )
+            }
+          },
+          { headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } }
+        );
+      }
+      return Response.json(
+        { error: { code: 'NOT_FOUND', message: 'wacrm-engine handles Cron and Queue workloads.' } },
+        { status: 404, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } }
+      );
     }
   };
 }
@@ -118,6 +145,7 @@ export function createWorkerHandlers(options: EngineHandlerOptions = {}) {
 const defaultHandlers = createWorkerHandlers();
 
 export default {
+  fetch: defaultHandlers.fetch,
   scheduled: defaultHandlers.scheduled,
   queue: defaultHandlers.queue
 };
