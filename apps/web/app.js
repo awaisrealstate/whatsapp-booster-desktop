@@ -14,8 +14,16 @@ const state = {
     (typeof localStorage !== 'undefined' ? localStorage.getItem('wacrm_api_base') : null) ||
     getDefaultApiBase(),
   token: typeof localStorage !== 'undefined' ? localStorage.getItem('wacrm_bearer_token') || '' : '',
+  activeView: (typeof localStorage !== 'undefined' ? localStorage.getItem('wacrm_active_view') : null) || 'overview',
+  activeConversationId:
+    (typeof localStorage !== 'undefined' ? localStorage.getItem('wacrm_active_conv_id') : null) || null,
+  activeQrAccountId:
+    (typeof localStorage !== 'undefined' ? localStorage.getItem('wacrm_active_qr_acc_id') : null) || null,
+  activeWaAccountId:
+    (typeof localStorage !== 'undefined' ? localStorage.getItem('wacrm_active_wa_acc_id') : null) || null,
   organization: null,
   organizations: [],
+  user: null,
   role: 'agent',
   accounts: [],
   contacts: [],
@@ -34,8 +42,6 @@ const state = {
   workersAiConfigured: false,
   geminiConfigured: false,
   statusInfo: null,
-  activeConversationId: null,
-  activeQrAccountId: null,
   qrSession: null,
   qrPollTimer: null,
   qrCountdownTimer: null,
@@ -45,8 +51,26 @@ const state = {
   convSearch: '',
   conversationMetrics: null,
   activeConversation: null,
-  assignmentHistory: []
+  assignmentHistory: [],
+  scheduledMessages: [],
+  waStatuses: [],
+  businessAnalytics: null,
+  aiRecommendations: []
 };
+
+export function setActiveView(viewName) {
+  if (!viewName) viewName = 'overview';
+  state.activeView = viewName;
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem('wacrm_active_view', viewName);
+  }
+  document.querySelectorAll('.nav-tab').forEach((b) => {
+    b.classList.toggle('active', b.dataset.view === viewName);
+  });
+  document.querySelectorAll('.view-panel').forEach((p) => {
+    p.classList.toggle('active', p.id === `view-${viewName}`);
+  });
+}
 
 export function formatConversationStatusBadge(conv) {
   if (!conv) return '<span class="badge-tag">--</span>';
@@ -205,20 +229,38 @@ function renderAllViews() {
   if (webhookPreview) webhookPreview.textContent = `${state.apiBase.replace(/\/+$/, '')}/webhooks/meta`;
 
   const accOpts = state.accounts
-    .map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.label)} (${escapeHtml(a.maskedPhoneNumberId || a.providerType)})</option>`)
+    .map((a) => {
+      const isSel = (state.activeWaAccountId && a.id === state.activeWaAccountId) || (!state.activeWaAccountId && a.isDefault);
+      return `<option value="${escapeHtml(a.id)}" ${isSel ? 'selected' : ''}>${escapeHtml(a.label)} (${escapeHtml(a.phoneNumber || a.maskedPhoneNumberId || a.providerType)})</option>`;
+    })
     .join('');
-  for (const id of ['camp-account-id', 'reply-account-id']) {
+  for (const id of ['camp-account-id', 'reply-account-id', 'composer-wa-account', 'status-account-id']) {
     const sel = document.getElementById(id);
-    if (sel) sel.innerHTML = accOpts || '<option value="">Connect Meta WhatsApp account first</option>';
+    if (sel) {
+      sel.innerHTML = accOpts || '<option value="">Connect WhatsApp account first</option>';
+      if (state.activeWaAccountId && state.accounts.some((a) => a.id === state.activeWaAccountId)) {
+        sel.value = state.activeWaAccountId;
+      }
+    }
   }
   const tplAcc = document.getElementById('tpl-account-id');
   if (tplAcc) tplAcc.innerHTML = '<option value="">Any / Local Template</option>' + accOpts;
 
   const listSel = document.getElementById('camp-list-id');
-  if (listSel) {
-    listSel.innerHTML =
-      state.lists.map((l) => `<option value="${escapeHtml(l.id)}">${escapeHtml(l.name)} (${Number(l.memberCount ?? 0)})</option>`).join('') ||
-      '<option value="">Create Contact List first</option>';
+  const compListSel = document.getElementById('composer-list-select');
+  const listOptions =
+    state.lists.map((l) => `<option value="${escapeHtml(l.id)}">${escapeHtml(l.name)} (${Number(l.memberCount ?? 0)})</option>`).join('') ||
+    '<option value="">Create Contact List first</option>';
+  if (listSel) listSel.innerHTML = listOptions;
+  if (compListSel) compListSel.innerHTML = '<option value="">Select a contact list...</option>' + listOptions;
+
+  const compContactSel = document.getElementById('composer-contact-select');
+  if (compContactSel) {
+    compContactSel.innerHTML =
+      '<option value="">Select a contact...</option>' +
+      state.contacts
+        .map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)} (${escapeHtml(c.phone)})</option>`)
+        .join('');
   }
 
   const tplOpts = state.templates
@@ -239,6 +281,108 @@ function renderAllViews() {
   renderAiAndKnowledge();
   renderTeamAndRoles();
   renderSubscriptionAndSettings();
+  renderScheduledMessages();
+  renderWaStatuses();
+  renderBusinessAi();
+}
+
+function renderSignedOutState() {
+  const sessionBar = document.getElementById('session-active-bar');
+  const devLoginPanel = document.getElementById('dev-login-panel');
+  if (sessionBar) sessionBar.style.display = 'none';
+  if (devLoginPanel) devLoginPanel.style.display = 'flex';
+  const label = document.getElementById('api-status-label');
+  if (label) label.textContent = 'Not Signed In';
+  const dot = document.getElementById('api-dot');
+  if (dot) dot.classList.remove('online');
+}
+
+function renderScheduledMessages() {
+  const el = document.getElementById('scheduled-messages-list');
+  if (!el) return;
+  el.innerHTML = state.scheduledMessages.length
+    ? state.scheduledMessages
+        .map(
+          (m) => `
+        <div class="item-row" style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; margin-bottom:6px; border:1px solid rgba(255,255,255,0.08); border-radius:6px;">
+          <div style="flex:1; min-width:0; padding-right:8px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <strong>${escapeHtml(m.recipientTarget || (m.recipientPhones || []).join(', ') || 'Recipient')}</strong>
+              <span class="badge-tag">${escapeHtml(m.status)}</span>
+              <span class="muted-note" style="font-size:11px;">⏰ ${new Date(m.scheduledAt).toLocaleString()}</span>
+            </div>
+            <div class="muted-note" style="font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px;">
+              ${escapeHtml(m.messageText || m.mediaUrl || 'Template message')}
+            </div>
+          </div>
+          <div>
+            ${m.status === 'pending' ? `<button class="btn-danger-sm" data-action="cancel-scheduled" data-id="${escapeHtml(m.id)}" style="padding:4px 8px; font-size:11px;">Cancel</button>` : ''}
+          </div>
+        </div>`
+        )
+        .join('')
+    : '<div class="muted-note">No scheduled messages queued.</div>';
+}
+
+function renderWaStatuses() {
+  const el = document.getElementById('wa-statuses-list');
+  if (!el) return;
+  el.innerHTML = state.waStatuses.length
+    ? state.waStatuses
+        .map(
+          (s) => `
+        <div class="item-row" style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; margin-bottom:6px; border:1px solid rgba(255,255,255,0.08); border-radius:6px;">
+          <div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="badge-tag">${escapeHtml(s.contentType)}</span>
+              <span class="muted-note" style="font-size:11px;">${new Date(s.createdAt).toLocaleString()}</span>
+            </div>
+            <div style="font-size:13px; margin-top:4px;">${escapeHtml(s.contentText || s.mediaCaption || '-')}</div>
+            ${s.mediaUrl ? `<div class="muted-note" style="font-size:11px;">Media: <a href="${escapeHtml(s.mediaUrl)}" target="_blank" rel="noopener">${escapeHtml(s.mediaUrl)}</a></div>` : ''}
+          </div>
+          <button class="btn-danger-sm" data-action="delete-status" data-id="${escapeHtml(s.id)}" style="padding:4px 8px; font-size:11px;">Delete</button>
+        </div>`
+        )
+        .join('')
+    : '<div class="muted-note">No status updates published yet.</div>';
+}
+
+function renderBusinessAi() {
+  const o = state.businessAnalytics;
+  if (o) {
+    const elConv = document.getElementById('stat-ai-conv-rate');
+    if (elConv) elConv.textContent = `${Number(o.conversionRate || 0).toFixed(1)}%`;
+    const elHigh = document.getElementById('stat-ai-high-intent');
+    if (elHigh) elHigh.textContent = String(o.highIntentLeadsCount ?? 0);
+    const elPricing = document.getElementById('stat-ai-pricing-queries');
+    if (elPricing) elPricing.textContent = String(o.pricingQueriesCount ?? 0);
+    const elCsat = document.getElementById('stat-ai-csat');
+    if (elCsat) elCsat.textContent = `${Number(o.positiveSentimentRatio || 95).toFixed(0)}%`;
+  }
+
+  const reportBox = document.getElementById('business-ai-report-box');
+  if (reportBox && state.aiRecommendations) {
+    if (state.aiRecommendations.length > 0) {
+      reportBox.innerHTML = `
+        <h4 style="margin:0 0 10px 0; color:#48bb78; font-size:14px;">Active Gemini Strategic Recommendations &amp; Lead Alerts</h4>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          ${state.aiRecommendations
+            .map(
+              (r) => `
+            <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:10px 12px;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <strong>${escapeHtml(r.title || r.type)}</strong>
+                <span class="badge-tag" style="background:${r.priority === 'high' ? '#e53e3e' : '#3182ce'}; color:#fff; font-size:10px; padding:1px 6px;">${escapeHtml(r.priority || 'normal')}</span>
+              </div>
+              <div style="font-size:12px; margin-top:4px; color:#cbd5e0;">${escapeHtml(r.description || '')}</div>
+              ${r.actionPayload ? `<div style="font-size:11px; margin-top:4px; color:#ecc94b;">💡 Action: ${escapeHtml(typeof r.actionPayload === 'string' ? r.actionPayload : JSON.stringify(r.actionPayload))}</div>` : ''}
+            </div>`
+            )
+            .join('')}
+        </div>
+      `;
+    }
+  }
 }
 
 function stopQrTimers() {
@@ -617,6 +761,9 @@ function renderSubscriptionAndSettings() {
 
 async function loadConversationMessages(convId) {
   state.activeConversationId = convId;
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem('wacrm_active_conv_id', convId);
+  }
   renderConversations();
 
   try {
@@ -764,16 +911,31 @@ function renderReport(report) {
 }
 
 async function refreshAllData() {
-  if (!state.token) return;
+  if (!state.token) {
+    renderSignedOutState();
+    return;
+  }
   try {
     const [me, statusRes] = await Promise.all([apiFetch('/api/v1/auth/me'), apiFetch('/api/v1/status')]);
     state.organization = me.organization;
     state.organizations = me.organizations || [];
+    state.user = me.user || null;
     state.role = me.membership.role;
     state.statusInfo = statusRes;
+
+    const sessionBar = document.getElementById('session-active-bar');
+    const devLoginPanel = document.getElementById('dev-login-panel');
+    const sessionBadge = document.getElementById('session-user-badge');
+    if (sessionBar) sessionBar.style.display = 'flex';
+    if (devLoginPanel) devLoginPanel.style.display = 'none';
+    if (sessionBadge) {
+      sessionBadge.textContent = `${me.user?.email || 'User'} · ${me.organization.name} (${me.membership.role.toUpperCase()})`;
+    }
+
     document.getElementById('api-status-label').textContent = `${me.organization.name} (${me.membership.role})`;
     document.getElementById('api-dot').classList.add('online');
-    document.getElementById('btn-signout').style.display = 'inline-block';
+    const btnSignout = document.getElementById('btn-signout');
+    if (btnSignout) btnSignout.style.display = 'inline-block';
 
     const q = new URLSearchParams();
     const search = document.getElementById('contacts-search')?.value || '';
@@ -781,28 +943,52 @@ async function refreshAllData() {
     if (search) q.set('search', search);
     if (stage) q.set('pipelineStage', stage);
 
-    const convUrl = `/api/v1/crm/conversations?limit=50` +
+    const convUrl =
+      `/api/v1/crm/conversations?limit=50` +
       (state.convFilter && state.convFilter !== 'all' ? `&filter=${encodeURIComponent(state.convFilter)}` : '') +
       (state.convSearch ? `&search=${encodeURIComponent(state.convSearch)}` : '');
 
-    const [acc, contacts, lists, tags, tpls, camps, convs, convMetrics, aiAgent, kb, members, invites, roles, sub, audits] =
-      await Promise.all([
-        apiFetch('/api/v1/whatsapp/accounts'),
-        apiFetch(`/api/v1/crm/contacts?${q.toString()}`),
-        apiFetch('/api/v1/crm/lists'),
-        apiFetch('/api/v1/crm/tags'),
-        apiFetch('/api/v1/templates'),
-        apiFetch('/api/v1/campaigns'),
-        apiFetch(convUrl),
-        apiFetch('/api/v1/crm/conversations-metrics').catch(() => ({ metrics: null })),
-        apiFetch('/api/v1/ai/agent').catch(() => ({ agent: null, workersAiConfigured: false })),
-        apiFetch('/api/v1/ai/knowledge').catch(() => ({ items: [] })),
-        apiFetch('/api/v1/team/members').catch(() => ({ items: [] })),
-        apiFetch('/api/v1/team/invites').catch(() => ({ items: [] })),
-        apiFetch('/api/v1/team/roles').catch(() => null),
-        apiFetch('/api/v1/subscription').catch(() => null),
-        apiFetch('/api/v1/org/audit-logs').catch(() => ({ items: [] }))
-      ]);
+    const [
+      acc,
+      contacts,
+      lists,
+      tags,
+      tpls,
+      camps,
+      convs,
+      convMetrics,
+      aiAgent,
+      kb,
+      members,
+      invites,
+      roles,
+      sub,
+      audits,
+      sched,
+      statuses,
+      analytics,
+      recs
+    ] = await Promise.all([
+      apiFetch('/api/v1/whatsapp/accounts'),
+      apiFetch(`/api/v1/crm/contacts?${q.toString()}`),
+      apiFetch('/api/v1/crm/lists'),
+      apiFetch('/api/v1/crm/tags'),
+      apiFetch('/api/v1/templates'),
+      apiFetch('/api/v1/campaigns'),
+      apiFetch(convUrl),
+      apiFetch('/api/v1/crm/conversations-metrics').catch(() => ({ metrics: null })),
+      apiFetch('/api/v1/ai/agent').catch(() => ({ agent: null, workersAiConfigured: false })),
+      apiFetch('/api/v1/ai/knowledge').catch(() => ({ items: [] })),
+      apiFetch('/api/v1/team/members').catch(() => ({ items: [] })),
+      apiFetch('/api/v1/team/invites').catch(() => ({ items: [] })),
+      apiFetch('/api/v1/team/roles').catch(() => null),
+      apiFetch('/api/v1/subscription').catch(() => null),
+      apiFetch('/api/v1/org/audit-logs').catch(() => ({ items: [] })),
+      apiFetch('/api/v1/messages/scheduled').catch(() => ({ items: [] })),
+      apiFetch('/api/v1/whatsapp/status').catch(() => ({ items: [] })),
+      apiFetch('/api/v1/analytics/overview').catch(() => ({ overview: null })),
+      apiFetch('/api/v1/business-ai/recommendations').catch(() => ({ items: [] }))
+    ]);
 
     state.accounts = acc.items || [];
     state.contacts = contacts.items || [];
@@ -821,13 +1007,40 @@ async function refreshAllData() {
     state.rolesData = roles;
     state.subscriptionData = sub;
     state.auditLogs = audits.items || [];
+    state.scheduledMessages = sched.items || [];
+    state.waStatuses = statuses.items || [];
+    state.businessAnalytics = analytics.overview || null;
+    state.aiRecommendations = recs.items || [];
 
     renderAllViews();
     showBanner('');
+
+    // Restore active conversation thread seamlessly if previously opened
+    const savedConvId =
+      state.activeConversationId ||
+      (typeof localStorage !== 'undefined' ? localStorage.getItem('wacrm_active_conv_id') : null);
+    if (savedConvId) {
+      const match = state.conversations.find((c) => c.id === savedConvId);
+      if (match) {
+        void loadConversationMessages(savedConvId);
+      }
+    }
   } catch (err) {
-    document.getElementById('api-status-label').textContent = 'Auth / Connection Error';
-    document.getElementById('api-dot').classList.remove('online');
-    showBanner(err.message, true);
+    if (
+      err.message &&
+      (err.message.includes('401') ||
+        err.message.includes('Unauthorized') ||
+        err.message.includes('SESSION_EXPIRED'))
+    ) {
+      state.token = '';
+      if (typeof localStorage !== 'undefined') localStorage.removeItem('wacrm_bearer_token');
+      renderSignedOutState();
+      showBanner('Session expired. Please sign in again.', true);
+    } else {
+      document.getElementById('api-status-label').textContent = 'Connection Error';
+      document.getElementById('api-dot').classList.remove('online');
+      showBanner(err.message, true);
+    }
   }
 }
 
@@ -858,14 +1071,54 @@ function wireEvents() {
   document.getElementById('input-api-base').value = state.apiBase;
   document.getElementById('input-bearer-token').value = state.token;
 
+  // Environment Selector
+  const envSel = document.getElementById('select-api-env');
+  if (envSel) {
+    if (state.apiBase.includes('127.0.0.1:8787') || state.apiBase.includes('localhost:8787')) {
+      envSel.value = 'http://127.0.0.1:8787';
+    } else if (state.apiBase.includes('workers.dev')) {
+      envSel.value = 'https://wacrm-api.awais-wacrm-2026.workers.dev';
+    } else {
+      envSel.value = 'custom';
+    }
+
+    envSel.addEventListener('change', async (e) => {
+      const val = e.target.value;
+      if (val === 'custom') {
+        const drawer = document.getElementById('connection-details-drawer');
+        if (drawer) drawer.style.display = 'flex';
+        return;
+      }
+      state.apiBase = val;
+      if (typeof localStorage !== 'undefined') localStorage.setItem('wacrm_api_base', val);
+      document.getElementById('input-api-base').value = val;
+      showBanner(`API Base switched to ${val}. Reloading...`);
+      await refreshAllData();
+    });
+  }
+
+  document.getElementById('btn-toggle-connection-details')?.addEventListener('click', () => {
+    const d = document.getElementById('connection-details-drawer');
+    if (d) d.style.display = d.style.display === 'none' ? 'flex' : 'none';
+  });
+
+  // Active view switching with persistent state
   document.querySelectorAll('.nav-tab').forEach((btn) => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.nav-tab').forEach((b) => b.classList.remove('active'));
-      document.querySelectorAll('.view-panel').forEach((p) => p.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById(`view-${btn.dataset.view}`)?.classList.add('active');
+      setActiveView(btn.dataset.view);
     });
   });
+
+  // Track WhatsApp account changes
+  for (const id of ['reply-account-id', 'composer-wa-account', 'status-account-id']) {
+    document.getElementById(id)?.addEventListener('change', (e) => {
+      const val = e.target.value;
+      if (val) {
+        state.activeWaAccountId = val;
+        if (typeof localStorage !== 'undefined') localStorage.setItem('wacrm_active_wa_acc_id', val);
+      }
+    });
+  }
 
   document.getElementById('btn-save-connection').addEventListener('click', () => {
     state.apiBase = document.getElementById('input-api-base').value.trim();
@@ -966,13 +1219,14 @@ function wireEvents() {
     }
   });
 
-  document.getElementById('btn-signout').addEventListener('click', async () => {
+  document.getElementById('btn-signout')?.addEventListener('click', async () => {
     try { await apiFetch('/api/v1/auth/logout', { method: 'POST' }); } catch {}
     state.token = '';
-    localStorage.removeItem('wacrm_bearer_token');
-    document.getElementById('input-bearer-token').value = '';
-    document.getElementById('api-status-label').textContent = 'Signed Out';
-    document.getElementById('api-dot').classList.remove('online');
+    if (typeof localStorage !== 'undefined') localStorage.removeItem('wacrm_bearer_token');
+    const tokInput = document.getElementById('input-bearer-token');
+    if (tokInput) tokInput.value = '';
+    renderSignedOutState();
+    showBanner('Signed out successfully.');
   });
 
   document.getElementById('btn-refresh-all').addEventListener('click', refreshAllData);
@@ -1571,6 +1825,163 @@ function wireEvents() {
     } catch (err) { showBanner(err.message, true); }
   });
 
+  // Simple Message Composer Target Radios
+  document.querySelectorAll('input[name="composer-target-type"]').forEach((radio) => {
+    radio.addEventListener('change', (e) => {
+      const val = e.target.value;
+      const phoneBox = document.getElementById('composer-target-phone-box');
+      const contactBox = document.getElementById('composer-target-contact-box');
+      const listBox = document.getElementById('composer-target-list-box');
+      if (phoneBox) phoneBox.style.display = val === 'phone' ? 'block' : 'none';
+      if (contactBox) contactBox.style.display = val === 'contact' ? 'block' : 'none';
+      if (listBox) listBox.style.display = val === 'list' ? 'block' : 'none';
+    });
+  });
+
+  // Schedule Checkbox
+  document.getElementById('composer-enable-schedule')?.addEventListener('change', (e) => {
+    const timeBox = document.getElementById('composer-schedule-time-box');
+    const submitBtn = document.getElementById('btn-composer-submit');
+    if (timeBox) timeBox.style.display = e.target.checked ? 'block' : 'none';
+    if (submitBtn) {
+      submitBtn.textContent = e.target.checked ? '⏰ CONFIRM SCHEDULED DELIVERY' : '🚀 SEND NOW';
+    }
+  });
+
+  // Emoji buttons
+  document.querySelectorAll('.btn-emoji').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const textarea = document.getElementById('composer-message-text');
+      if (textarea && btn.dataset.emoji) {
+        textarea.value += btn.dataset.emoji;
+        textarea.focus();
+      }
+    });
+  });
+
+  // Submit Composer Form
+  document.getElementById('form-simple-composer')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const accountId = document.getElementById('composer-wa-account').value;
+    if (!accountId) return showBanner('Select or connect a WhatsApp account first.', true);
+
+    const targetType = document.querySelector('input[name="composer-target-type"]:checked')?.value || 'phone';
+    const messageText = document.getElementById('composer-message-text').value.trim();
+    if (!messageText) return showBanner('Message text is required.', true);
+
+    const isScheduled = document.getElementById('composer-enable-schedule')?.checked;
+    const scheduleDt = document.getElementById('composer-schedule-datetime')?.value;
+
+    let recipientPhones = [];
+    let recipientContactIds = [];
+    let recipientListId = null;
+
+    if (targetType === 'phone') {
+      const phone = document.getElementById('composer-phone-input').value.trim();
+      if (!phone) return showBanner('Enter recipient phone number.', true);
+      recipientPhones = [phone];
+    } else if (targetType === 'contact') {
+      const contactId = document.getElementById('composer-contact-select').value;
+      if (!contactId) return showBanner('Select a contact.', true);
+      recipientContactIds = [contactId];
+    } else if (targetType === 'list') {
+      const listId = document.getElementById('composer-list-select').value;
+      if (!listId) return showBanner('Select a contact list.', true);
+      recipientListId = listId;
+    }
+
+    try {
+      if (isScheduled) {
+        if (!scheduleDt) return showBanner('Select a scheduled date and time.', true);
+        const scheduledAt = new Date(scheduleDt).getTime();
+        if (scheduledAt <= Date.now()) return showBanner('Scheduled delivery time must be in the future.', true);
+
+        await apiFetch('/api/v1/messages/scheduled/schedule', {
+          method: 'POST',
+          body: JSON.stringify({
+            whatsappAccountId: accountId,
+            recipientType: targetType === 'list' ? 'list' : (targetType === 'contact' ? 'contact' : 'phones'),
+            recipientPhones: recipientPhones.length ? recipientPhones : undefined,
+            recipientContactIds: recipientContactIds.length ? recipientContactIds : undefined,
+            recipientListId: recipientListId || undefined,
+            messageText,
+            scheduledAt,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+          })
+        });
+        showBanner(`Message scheduled successfully for ${new Date(scheduledAt).toLocaleString()}.`);
+      } else {
+        // Send now
+        await apiFetch('/api/v1/messages/scheduled/schedule', {
+          method: 'POST',
+          body: JSON.stringify({
+            whatsappAccountId: accountId,
+            recipientType: targetType === 'list' ? 'list' : (targetType === 'contact' ? 'contact' : 'phones'),
+            recipientPhones: recipientPhones.length ? recipientPhones : undefined,
+            recipientContactIds: recipientContactIds.length ? recipientContactIds : undefined,
+            recipientListId: recipientListId || undefined,
+            messageText,
+            scheduledAt: Date.now() + 1000,
+            timezone: 'UTC'
+          })
+        });
+        showBanner('Message queued and dispatched immediately.');
+      }
+      document.getElementById('composer-message-text').value = '';
+      await refreshAllData();
+    } catch (err) {
+      showBanner(err.message, true);
+    }
+  });
+
+  document.getElementById('btn-refresh-scheduled')?.addEventListener('click', refreshAllData);
+
+  // Submit Status Form
+  document.getElementById('form-wa-status')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const accountId = document.getElementById('status-account-id').value;
+    if (!accountId) return showBanner('Select a WhatsApp account first.', true);
+
+    const contentType = document.getElementById('status-content-type').value;
+    const contentText = document.getElementById('status-content-text').value.trim();
+    const mediaUrl = document.getElementById('status-media-url')?.value.trim() || null;
+    const backgroundColor = document.getElementById('status-bg-color')?.value || '#075e54';
+    const font = document.getElementById('status-font')?.value || 'SANS_SERIF';
+
+    try {
+      await apiFetch('/api/v1/whatsapp/status', {
+        method: 'POST',
+        body: JSON.stringify({
+          whatsappAccountId: accountId,
+          contentType,
+          contentText: contentText || null,
+          mediaUrl: mediaUrl || undefined,
+          backgroundColor,
+          font
+        })
+      });
+      document.getElementById('status-content-text').value = '';
+      showBanner('WhatsApp Status published successfully.');
+      await refreshAllData();
+    } catch (err) {
+      showBanner(err.message, true);
+    }
+  });
+
+  document.getElementById('btn-refresh-statuses')?.addEventListener('click', refreshAllData);
+
+  // Generate Business AI
+  document.getElementById('btn-generate-business-ai')?.addEventListener('click', async () => {
+    try {
+      showBanner('Generating Gemini Strategic Intelligence report...');
+      const res = await apiFetch('/api/v1/business-ai/recommendations/generate', { method: 'POST' });
+      showBanner(`Generated ${res.generated} actionable AI business recommendations.`);
+      await refreshAllData();
+    } catch (err) {
+      showBanner(err.message, true);
+    }
+  });
+
   document.body.addEventListener('click', async (e) => {
     const target = e.target.closest('[data-action]');
     if (!target) return;
@@ -1582,9 +1993,11 @@ function wireEvents() {
       else if (action === 'manage-qr') { state.activeQrAccountId = id; state.qrSession = (await apiFetch(`/api/v1/whatsapp/accounts/qr/${encodeURIComponent(id)}/status`)).session; renderAccounts(); }
       else if (action === 'qr-reconnect') { state.activeQrAccountId = id; const r = await apiFetch(`/api/v1/whatsapp/accounts/qr/${encodeURIComponent(id)}/reconnect`, { method: 'POST' }); state.qrSession = r.session; await refreshAllData(); }
       else if (action === 'disconnect-wa') { stopQrTimers(); await apiFetch(`/api/v1/whatsapp/accounts/${encodeURIComponent(id)}/disconnect`, { method: 'POST' }); state.qrSession = null; await refreshAllData(); }
+      else if (action === 'cancel-scheduled') { await apiFetch(`/api/v1/messages/scheduled/${encodeURIComponent(id)}`, { method: 'DELETE' }); showBanner('Scheduled message cancelled.'); await refreshAllData(); }
+      else if (action === 'delete-status') { await apiFetch(`/api/v1/whatsapp/status/${encodeURIComponent(id)}`, { method: 'DELETE' }); showBanner('WhatsApp Status removed.'); await refreshAllData(); }
       else if (action === 'del-contact') { await apiFetch(`/api/v1/crm/contacts/${encodeURIComponent(id)}`, { method: 'DELETE' }); await refreshAllData(); }
       else if (action === 'stop-contact') { await apiFetch('/api/v1/crm/consent/stop', { method: 'POST', body: JSON.stringify({ phone: target.dataset.phone, reason: 'manual_opt_out' }) }); showBanner('STOP suppression recorded.'); }
-      else if (action === 'start-conv') { const res = await apiFetch('/api/v1/crm/conversations', { method: 'POST', body: JSON.stringify({ contactId: id, channelType: 'official_meta_cloud' }) }); await refreshAllData(); document.querySelector('.nav-tab[data-view="conversations"]')?.click(); await loadConversationMessages(res.conversation.id); }
+      else if (action === 'start-conv') { const res = await apiFetch('/api/v1/crm/conversations', { method: 'POST', body: JSON.stringify({ contactId: id, channelType: 'official_meta_cloud' }) }); await refreshAllData(); setActiveView('conversations'); await loadConversationMessages(res.conversation.id); }
       else if (action === 'del-list') { await apiFetch(`/api/v1/crm/lists/${encodeURIComponent(id)}`, { method: 'DELETE' }); await refreshAllData(); }
       else if (action === 'del-tag') { await apiFetch(`/api/v1/crm/tags/${encodeURIComponent(id)}`, { method: 'DELETE' }); await refreshAllData(); }
       else if (action === 'del-template') { await apiFetch(`/api/v1/templates/${encodeURIComponent(id)}`, { method: 'DELETE' }); await refreshAllData(); }
@@ -1592,7 +2005,7 @@ function wireEvents() {
       else if (action === 'camp-pause') { await apiFetch(`/api/v1/campaigns/${encodeURIComponent(id)}/pause`, { method: 'POST' }); await refreshAllData(); }
       else if (action === 'camp-resume') { await apiFetch(`/api/v1/campaigns/${encodeURIComponent(id)}/resume`, { method: 'POST' }); await refreshAllData(); }
       else if (action === 'camp-tick') { await apiFetch(`/api/v1/campaigns/${encodeURIComponent(id)}/dispatch-tick`, { method: 'POST' }); await refreshAllData(); }
-      else if (action === 'view-report') { document.getElementById('report-campaign-select').value = id; document.querySelector('.nav-tab[data-view="reports"]')?.click(); renderReport(await apiFetch(`/api/v1/campaigns/${encodeURIComponent(id)}/report`)); }
+      else if (action === 'view-report') { document.getElementById('report-campaign-select').value = id; setActiveView('reports'); renderReport(await apiFetch(`/api/v1/campaigns/${encodeURIComponent(id)}/report`)); }
       else if (action === 'select-conv') { await loadConversationMessages(id); }
       else if (action === 'del-kb') { await apiFetch(`/api/v1/ai/knowledge/${encodeURIComponent(id)}`, { method: 'DELETE' }); await refreshAllData(); }
       else if (action === 'remove-member') { await apiFetch(`/api/v1/team/members/${encodeURIComponent(id)}`, { method: 'DELETE' }); await refreshAllData(); }
@@ -1609,6 +2022,11 @@ if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
     captureOAuthHashToken();
     wireEvents();
-    if (state.token) refreshAllData();
+    setActiveView(state.activeView);
+    if (state.token) {
+      refreshAllData();
+    } else {
+      renderSignedOutState();
+    }
   });
 }

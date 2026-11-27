@@ -17,17 +17,36 @@
     </div>
 
     <div class="nav-actions">
+      <select id="select-api-env" class="input-modern" title="Select API Environment" style="font-size: 12px; padding: 5px 8px;">
+        <option value="https://wacrm-api.awais-wacrm-2026.workers.dev">Cloudflare Live API</option>
+        <option value="http://127.0.0.1:8787">Local Dev / Desktop API (127.0.0.1:8787)</option>
+        <option value="custom">Custom API URL...</option>
+      </select>
       <select id="select-active-org" class="input-modern" title="Switch Organization"></select>
       <div class="status-indicator">
         <span class="pulse-dot" id="api-dot"></span>
         <span id="api-status-label">Not Signed In</span>
       </div>
-      <button class="btn-secondary" id="btn-refresh-all" title="Refresh active workspace data">â†» Refresh</button>
+      <button class="btn-secondary" id="btn-refresh-all" title="Refresh active workspace data">↻ Refresh</button>
     </div>
   </header>
 
   <section class="auth-bar" id="auth-bar">
-    <div class="auth-row">
+    <!-- Active Authenticated Session Banner -->
+    <div id="session-active-bar" style="display:none; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; background:rgba(0,168,132,0.12); border:1px solid rgba(0,168,132,0.3); padding:8px 14px; border-radius:6px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="color:#25d366; font-size:16px;">✓</span>
+        <span id="session-user-badge" style="font-size:13px; font-weight:600;">Signed In</span>
+        <span class="badge-tag" id="session-persistence-badge" style="background:#234e52; color:#b2f5ea; font-size:11px;">Database &amp; Session Saved</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <button class="btn-secondary" id="btn-toggle-connection-details" style="font-size:11px; padding:3px 8px;">⚙ Connection Details</button>
+        <button class="btn-danger-sm" id="btn-signout">Sign Out</button>
+      </div>
+    </div>
+
+    <!-- Connection Details Drawer (Collapsible) -->
+    <div class="auth-row" id="connection-details-drawer" style="display:none;">
       <label class="field-inline">
         <span>API URL</span>
         <input type="url" id="input-api-base" class="input-modern" value="https://wacrm-api.awais-wacrm-2026.workers.dev" />
@@ -36,19 +55,22 @@
         <span>Session Token</span>
         <input type="password" id="input-bearer-token" class="input-modern" placeholder="Sign in with Google/GitHub OAuth2 or paste session token" />
       </label>
-      <button class="btn-primary" id="btn-save-connection">Connect</button>
-      <button class="btn-secondary" id="btn-oauth-google">Google OAuth2</button>
-      <button class="btn-secondary" id="btn-oauth-github">GitHub OAuth2</button>
-      <button class="btn-secondary" id="btn-toggle-dev-login">Email / Dev Login</button>
-      <button class="btn-danger-sm" id="btn-signout" style="display:none;">Sign Out</button>
+      <button class="btn-primary" id="btn-save-connection">Save Connection</button>
     </div>
+
     <div id="oauth-warning-banner" class="banner banner-warning" style="display:none; margin: 8px 0; background: rgba(221, 107, 32, 0.15); border: 1px solid rgba(221, 107, 32, 0.4); color: #ecc94b; padding: 8px 12px; border-radius: 6px; font-size: 12px;"></div>
-    <div id="dev-login-panel" class="dev-login-panel" style="display:none;">
-      <input type="email" id="login-email" class="input-modern" placeholder="Email" />
+
+    <!-- Login / Registration Form (Visible when not signed in) -->
+    <div id="dev-login-panel" class="dev-login-panel" style="display:flex;">
+      <input type="email" id="login-email" class="input-modern" placeholder="Email (e.g. user@example.com)" />
       <input type="password" id="login-password" class="input-modern" placeholder="Password (min 8 chars)" />
       <button class="btn-primary" id="btn-dev-login">Sign In</button>
       <button class="btn-secondary" id="btn-dev-register">Create Account</button>
-      <span class="muted-note">Sign in directly with your email and password, or use Google/GitHub OAuth2 when configured.</span>
+      <button class="btn-secondary" id="btn-oauth-google">Google OAuth2</button>
+      <button class="btn-secondary" id="btn-oauth-github">GitHub OAuth2</button>
+      <span class="muted-note" style="font-size:11px; width:100%;">
+        🔒 All credentials, WhatsApp connections, chats, and options are stored permanently in the database and restored automatically on refresh.
+      </span>
     </div>
     <div id="global-banner" class="banner" style="display:none;"></div>
   </section>
@@ -58,18 +80,21 @@
       <button class="nav-tab active" data-view="overview">1. Dashboard Overview</button>
       <button class="nav-tab" data-view="contacts">2. Contacts</button>
       <button class="nav-tab" data-view="lists">3. Contact Lists</button>
-      <button class="nav-tab" data-view="tags">4. Tags & Consent</button>
+      <button class="nav-tab" data-view="tags">4. Tags &amp; Consent</button>
       <button class="nav-tab" data-view="conversations">5. Conversations Inbox</button>
       <button class="nav-tab" data-view="whatsapp">6. WhatsApp Connection</button>
-      <button class="nav-tab" data-view="templates">7. Message Templates</button>
-      <button class="nav-tab" data-view="campaigns">8. Campaign Management</button>
-      <button class="nav-tab" data-view="reports">9. Campaign Reports</button>
-      <button class="nav-tab" data-view="ai-support">10. AI Customer Support</button>
-      <button class="nav-tab" data-view="knowledge">11. Knowledge Base</button>
-      <button class="nav-tab" data-view="team">12. Team Members</button>
-      <button class="nav-tab" data-view="roles">13. Roles & Permissions</button>
-      <button class="nav-tab" data-view="subscription">14. Usage & Subscription</button>
-      <button class="nav-tab" data-view="settings">15. Organization Settings</button>
+      <button class="nav-tab" data-view="composer">7. Quick Message Composer</button>
+      <button class="nav-tab" data-view="status">8. WhatsApp Status</button>
+      <button class="nav-tab" data-view="templates">9. Message Templates</button>
+      <button class="nav-tab" data-view="campaigns">10. Campaign Management</button>
+      <button class="nav-tab" data-view="reports">11. Campaign Reports</button>
+      <button class="nav-tab" data-view="ai-support">12. AI Customer Support</button>
+      <button class="nav-tab" data-view="business-ai">13. AI Business Intelligence</button>
+      <button class="nav-tab" data-view="knowledge">14. Knowledge Base</button>
+      <button class="nav-tab" data-view="team">15. Team Members</button>
+      <button class="nav-tab" data-view="roles">16. Roles &amp; Permissions</button>
+      <button class="nav-tab" data-view="subscription">17. Usage &amp; Subscription</button>
+      <button class="nav-tab" data-view="settings">18. Organization Settings</button>
     </nav>
 
     <main class="main-content">
@@ -421,7 +446,151 @@
         </div>
       </section>
 
-      <!-- 7. MESSAGE TEMPLATES -->
+      <!-- 7. QUICK MESSAGE COMPOSER & SCHEDULER -->
+      <section class="view-panel" id="view-composer">
+        <div class="grid-two">
+          <div class="dash-card">
+            <div class="card-title">
+              <div>
+                <h3 style="margin: 0;">Simple WhatsApp Message Composer</h3>
+                <div class="muted-note" style="font-size: 12px; margin-top: 4px;">
+                  Send a direct message or schedule delivery without complex campaign setups.
+                </div>
+              </div>
+              <span class="badge-tag">Direct &amp; Scheduled</span>
+            </div>
+
+            <form id="form-simple-composer" class="stack-form">
+              <label class="stack-form">
+                <span style="font-weight: 600;">Sending WhatsApp Account</span>
+                <select id="composer-wa-account" class="input-modern" required></select>
+              </label>
+
+              <div class="stack-form">
+                <span style="font-weight: 600;">Recipients Target</span>
+                <div class="row-actions">
+                  <label><input type="radio" name="composer-target-type" value="phone" checked /> Direct Phone</label>
+                  <label><input type="radio" name="composer-target-type" value="contact" /> Saved Contact</label>
+                  <label><input type="radio" name="composer-target-type" value="list" /> Contact List</label>
+                </div>
+
+                <div id="composer-target-phone-box">
+                  <input type="text" id="composer-phone-input" class="input-modern" placeholder="Recipient Phone (e.g. 03001234567 or +92...)" />
+                </div>
+
+                <div id="composer-target-contact-box" style="display:none;">
+                  <select id="composer-contact-select" class="input-modern">
+                    <option value="">Select a contact...</option>
+                  </select>
+                </div>
+
+                <div id="composer-target-list-box" style="display:none;">
+                  <select id="composer-list-select" class="input-modern">
+                    <option value="">Select a contact list...</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="stack-form">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <span style="font-weight: 600;">Message</span>
+                  <div style="display:flex; gap:4px;">
+                    <button type="button" class="btn-secondary btn-emoji" data-emoji="👋" style="padding:2px 6px; font-size:12px;">👋</button>
+                    <button type="button" class="btn-secondary btn-emoji" data-emoji="🙏" style="padding:2px 6px; font-size:12px;">🙏</button>
+                    <button type="button" class="btn-secondary btn-emoji" data-emoji="✅" style="padding:2px 6px; font-size:12px;">✅</button>
+                    <button type="button" class="btn-secondary btn-emoji" data-emoji="🎉" style="padding:2px 6px; font-size:12px;">🎉</button>
+                  </div>
+                </div>
+                <textarea id="composer-message-text" class="input-modern" rows="5" placeholder="Type your WhatsApp message here... (use {{name}} for personalization)" required></textarea>
+              </div>
+
+              <!-- Scheduling Option Drawer -->
+              <div id="composer-schedule-drawer" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 12px; margin-top: 6px;">
+                <label style="display:flex; align-items:center; gap:8px; font-weight:600; cursor:pointer;">
+                  <input type="checkbox" id="composer-enable-schedule" />
+                  <span>⏰ Schedule for later delivery</span>
+                </label>
+                <div id="composer-schedule-time-box" style="display:none; margin-top: 10px;">
+                  <label class="stack-form">
+                    <span class="muted-note" style="font-size: 11px;">Delivery Date &amp; Time (Timezone: <span id="composer-tz-label">Local</span>)</span>
+                    <input type="datetime-local" id="composer-schedule-datetime" class="input-modern" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="row-actions" style="margin-top: 12px;">
+                <button type="submit" id="btn-composer-submit" class="btn-primary" style="padding: 10px 24px; font-size: 14px; font-weight: 700;">
+                  🚀 SEND NOW
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <div class="dash-card">
+            <div class="card-title">
+              <h3>Scheduled Messages Queue</h3>
+              <button class="btn-secondary" id="btn-refresh-scheduled" style="font-size: 11px; padding: 3px 8px;">↻ Refresh</button>
+            </div>
+            <div id="scheduled-messages-list" class="list-stack">
+              <div class="muted-note">No scheduled messages queued.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 8. WHATSAPP STATUS (STORIES) -->
+      <section class="view-panel" id="view-status">
+        <div class="compliance-banner">
+          <strong>WhatsApp Status Notice:</strong> Status updates are published via the WhatsApp Web session (Option B / Baileys). Meta Official Cloud API does not support personal status/story publishing on business numbers.
+        </div>
+        <div class="grid-two">
+          <div class="dash-card">
+            <div class="card-title"><h3>Publish WhatsApp Status</h3></div>
+            <form id="form-wa-status" class="stack-form">
+              <select id="status-account-id" class="input-modern" required></select>
+              <select id="status-content-type" class="input-modern">
+                <option value="text">Text Status</option>
+                <option value="image">Image Status (URL)</option>
+                <option value="video">Video Status (URL)</option>
+              </select>
+              <textarea id="status-content-text" class="input-modern" rows="4" placeholder="Status text / caption..." required></textarea>
+              <div id="status-media-url-box" style="display:none;">
+                <input type="url" id="status-media-url" class="input-modern" placeholder="Media HTTPS URL (e.g. https://.../promo.jpg)" />
+              </div>
+              <div class="row-actions" id="status-styling-box">
+                <label class="field-inline">
+                  <span>Background:</span>
+                  <input type="color" id="status-bg-color" value="#075e54" />
+                </label>
+                <label class="field-inline grow">
+                  <span>Font:</span>
+                  <select id="status-font" class="input-modern">
+                    <option value="SANS_SERIF">Sans Serif</option>
+                    <option value="SERIF">Serif</option>
+                    <option value="NORICAN">Norican / Cursive</option>
+                    <option value="BRYNDAN_WRITE">Bryndan Write</option>
+                    <option value="BEBASNEUE">Bebas Neue</option>
+                  </select>
+                </label>
+              </div>
+              <div class="row-actions" style="margin-top: 10px;">
+                <button type="submit" class="btn-primary">Publish WhatsApp Status</button>
+              </div>
+            </form>
+          </div>
+          <div class="dash-card">
+            <div class="card-title">
+              <h3>Recent Status Updates</h3>
+              <button class="btn-secondary" id="btn-refresh-statuses" style="font-size: 11px; padding: 3px 8px;">↻ Refresh</button>
+            </div>
+            <div id="wa-statuses-list" class="list-stack">
+              <div class="muted-note">No status updates published yet.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 9. MESSAGE TEMPLATES -->
       <section class="view-panel" id="view-templates">
         <div class="grid-two">
           <div class="dash-card">
@@ -634,12 +803,56 @@
               </div>
             </div>
 
-            <button type="submit" class="btn-primary" style="padding: 10px 20px; font-weight: 600;">Save AI Chatbot & Business Profile</button>
+            <button type="submit" class="btn-primary" style="padding: 10px 20px; font-weight: 600;">Save AI Chatbot &amp; Business Profile</button>
           </form>
         </div>
       </section>
 
-      <!-- 11. KNOWLEDGE BASE -->
+      <!-- 13. AI BUSINESS INTELLIGENCE & ANALYTICS -->
+      <section class="view-panel" id="view-business-ai">
+        <div class="dash-card">
+          <div class="card-title">
+            <div>
+              <h3 style="margin: 0;">AI Business Analytics &amp; Strategic Intelligence</h3>
+              <div class="muted-note" style="font-size: 12px; margin-top: 4px;">
+                Gemini-powered customer intelligence, conversion signals, churn prevention, and actionable growth recommendations.
+              </div>
+            </div>
+            <button type="button" class="btn-primary" id="btn-generate-business-ai" style="padding: 6px 16px;">
+              🧠 Generate Gemini Intelligence Report
+            </button>
+          </div>
+
+          <div id="business-ai-overview-cards" class="metrics-grid" style="margin-top: 14px;">
+            <div class="metric-card">
+              <span class="metric-title">Lead Conversion Rate</span>
+              <strong class="metric-value" id="stat-ai-conv-rate">--</strong>
+              <span class="metric-sub">Active pipeline conversions</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-title">High-Intent Leads</span>
+              <strong class="metric-value" id="stat-ai-high-intent">--</strong>
+              <span class="metric-sub">Ready to purchase</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-title">Pricing Queries</span>
+              <strong class="metric-value" id="stat-ai-pricing-queries">--</strong>
+              <span class="metric-sub">Commercial interest</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-title">Customer Satisfaction</span>
+              <strong class="metric-value" id="stat-ai-csat">--</strong>
+              <span class="metric-sub">Positive sentiment ratio</span>
+            </div>
+          </div>
+
+          <div id="business-ai-report-box" style="margin-top: 16px; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 16px;">
+            <div class="muted-note">Click <strong>Generate Gemini Intelligence Report</strong> to analyze customer conversations, extract sales opportunities, and get AI recommendations.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 14. KNOWLEDGE BASE -->
       <section class="view-panel" id="view-knowledge">
         <div class="grid-two">
           <div class="dash-card">
