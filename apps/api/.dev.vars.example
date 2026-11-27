@@ -1,0 +1,25 @@
+# Copy to .dev.vars locally (never commit .dev.vars or real secrets)
+APP_ENV=development
+ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:8788
+LOG_LEVEL=info
+# Keep false until PBKDF2 100k CPU usage is verified on Cloudflare Workers Free (10 ms limit):
+PASSWORD_AUTH_ENABLED=false
+META_GRAPH_VERSION=v21.0
+WEB_APP_URL=http://127.0.0.1:8788
+
+# Required for AES-256-GCM encryption of Meta WABA tokens (>= 16 chars; set via `wrangler secret put` in prod):
+# ENCRYPTION_KEY=replace-with-at-least-32-chars-random-secret
+
+# Google OAuth2 (PKCE) & GitHub OAuth2 (optional):
+# GOOGLE_CLIENT_ID=replace-with-google-client-id.apps.googleusercontent.com
+# GOOGLE_CLIENT_SECRET=replace-with-google-client-secret
+# GITHUB_CLIENT_ID=replace-with-github-client-id
+# GITHUB_CLIENT_SECRET=replace-with-github-client-secret
+
+# Optional platform-level Meta fallback credentials (per-org credentials are encrypted in D1):
+# META_APP_SECRET=replace-with-meta-app-secret
+# META_WEBHOOK_VERIFY_TOKEN=replace-with-verify-token
+
+# Optional separate Node.js WhatsApp Web QR service (@wacrm/qr-service):
+# QR_BRIDGE_URL=http://127.0.0.1:8790
+# QR_BRIDGE_SECRET=replace-with-at-least-32-chars-bridge-hmac-secret

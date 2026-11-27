@@ -730,27 +730,28 @@
 
   // Desktop Window Message Listener for standalone Electron execution
   window.addEventListener('message', async (event) => {
-    if (!event.data) return;
+    if (event.source !== window || !event.data) return;
 
     if (event.data.action === 'WACRM_DESKTOP_CHECK_CONN') {
       const status = Automator.getConnectionStatus();
-      window.postMessage({ action: 'WACRM_DESKTOP_CONN_RESULT', ...status }, '*');
+      window.postMessage({ action: 'WACRM_DESKTOP_CONN_RESULT', ...status }, window.location.origin);
       return;
     }
 
     if (event.data.action === 'WACRM_DESKTOP_DISPATCH') {
+      const dispatchToken = event.data.dispatchToken || '';
       try {
         const result = await Automator.sendToContact(
           event.data.contact,
           event.data.messageText,
           {
             typingDelayMs: event.data.typingDelayMs || 2500,
-            dispatchToken: event.data.dispatchToken || ''
+            dispatchToken
           }
         );
-        window.postMessage({ action: 'WACRM_DESKTOP_RESULT', ...result }, '*');
+        window.postMessage({ action: 'WACRM_DESKTOP_RESULT', dispatchToken, ...result }, window.location.origin);
       } catch (err) {
-        window.postMessage({ action: 'WACRM_DESKTOP_RESULT', success: false, error: err.message }, '*');
+        window.postMessage({ action: 'WACRM_DESKTOP_RESULT', dispatchToken, success: false, error: err.message }, window.location.origin);
       }
     }
   });

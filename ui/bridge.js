@@ -276,9 +276,10 @@
         window.parent.postMessage({ action: 'HOST_LOAD_STATE' }, '*');
       } catch (e) {}
 
-      // Listen for host events
+      // Listen for host events (strictly verify parent window source)
       window.addEventListener('message', (event) => {
-        if (!event.data) return;
+        if (event.source !== window.parent) return;
+        if (!event.data || typeof event.data !== 'object') return;
 
         if (event.data.action === 'HOST_DISPATCH_RESULT') {
           this.handleDispatchResult(event.data.result);
@@ -927,6 +928,15 @@
           case 'openWhatsAppTab':
             window.parent.postMessage({ action: 'SWITCH_TO_WA_TAB' }, '*');
             response = { success: true };
+            break;
+
+          case 'exportLegacyState':
+            response = {
+              success: true,
+              exportedAt: Date.now(),
+              source: 'whatsapp_booster_desktop',
+              campaignState: { ...Orchestrator.state }
+            };
             break;
 
           default:

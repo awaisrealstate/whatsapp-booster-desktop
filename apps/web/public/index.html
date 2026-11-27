@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WhatsApp Booster Pro â€” Cloud CRM, AI & Campaign Platform</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="navbar">
+    <div class="nav-brand">
+      <div class="brand-logo">WA</div>
+      <div class="brand-text">
+        <h1>WhatsApp Booster Pro <span class="badge-pill" id="plan-badge">SAAS</span></h1>
+        <span class="badge-stealth" id="org-subtitle">Official Meta Cloud API Â· AI Support Â· Multi-Tenant SaaS</span>
+      </div>
+    </div>
+
+    <div class="nav-actions">
+      <select id="select-active-org" class="input-modern" title="Switch Organization"></select>
+      <div class="status-indicator">
+        <span class="pulse-dot" id="api-dot"></span>
+        <span id="api-status-label">Not Signed In</span>
+      </div>
+      <button class="btn-secondary" id="btn-refresh-all" title="Refresh active workspace data">â†» Refresh</button>
+    </div>
+  </header>
+
+  <section class="auth-bar" id="auth-bar">
+    <div class="auth-row">
+      <label class="field-inline">
+        <span>API URL</span>
+        <input type="url" id="input-api-base" class="input-modern" value="https://wacrm-api.awais-wacrm-2026.workers.dev" />
+      </label>
+      <label class="field-inline grow">
+        <span>Session Token</span>
+        <input type="password" id="input-bearer-token" class="input-modern" placeholder="Sign in with Google/GitHub OAuth2 or paste session token" />
+      </label>
+      <button class="btn-primary" id="btn-save-connection">Connect</button>
+      <button class="btn-secondary" id="btn-oauth-google">Google OAuth2</button>
+      <button class="btn-secondary" id="btn-oauth-github">GitHub OAuth2</button>
+      <button class="btn-secondary" id="btn-toggle-dev-login">Dev Login</button>
+      <button class="btn-danger-sm" id="btn-signout" style="display:none;">Sign Out</button>
+    </div>
+    <div id="dev-login-panel" class="dev-login-panel" style="display:none;">
+      <input type="email" id="login-email" class="input-modern" placeholder="Email" />
+      <input type="password" id="login-password" class="input-modern" placeholder="Password" />
+      <button class="btn-primary" id="btn-dev-login">Sign In (Dev Only)</button>
+      <span class="muted-note">Password login stays gated OFF until Cloudflare Worker 10ms CPU compliance is verified; OAuth2 PKCE is preferred.</span>
+    </div>
+    <div id="global-banner" class="banner" style="display:none;"></div>
+  </section>
+
+  <div class="app-shell">
+    <nav class="sidebar" id="sidebar-nav">
+      <button class="nav-tab active" data-view="overview">1. Dashboard Overview</button>
+      <button class="nav-tab" data-view="contacts">2. Contacts</button>
+      <button class="nav-tab" data-view="lists">3. Contact Lists</button>
+      <button class="nav-tab" data-view="tags">4. Tags & Consent</button>
+      <button class="nav-tab" data-view="conversations">5. Conversations Inbox</button>
+      <button class="nav-tab" data-view="whatsapp">6. WhatsApp Connection</button>
+      <button class="nav-tab" data-view="templates">7. Message Templates</button>
+      <button class="nav-tab" data-view="campaigns">8. Campaign Management</button>
+      <button class="nav-tab" data-view="reports">9. Campaign Reports</button>
+      <button class="nav-tab" data-view="ai-support">10. AI Customer Support</button>
+      <button class="nav-tab" data-view="knowledge">11. Knowledge Base</button>
+      <button class="nav-tab" data-view="team">12. Team Members</button>
+      <button class="nav-tab" data-view="roles">13. Roles & Permissions</button>
+      <button class="nav-tab" data-view="subscription">14. Usage & Subscription</button>
+      <button class="nav-tab" data-view="settings">15. Organization Settings</button>
+    </nav>
+
+    <main class="main-content">
+      <!-- 1. OVERVIEW -->
+      <section class="view-panel active" id="view-overview">
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span class="metric-title">Contacts</span>
+            <strong class="metric-value" id="stat-contacts-count">0</strong>
+            <span class="metric-sub" id="stat-contacts-sub">Real D1 workspace total</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-title">Cloud Campaigns</span>
+            <strong class="metric-value" id="stat-campaigns-count">0</strong>
+            <span class="metric-sub" id="stat-campaigns-sub">Durable D1 + Queues + Cron</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-title">Monthly Outbound</span>
+            <strong class="metric-value" id="stat-monthly-msgs">0</strong>
+            <span class="metric-sub" id="stat-monthly-sub">Usage tracked per day/month</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-title">Today's AI Replies</span>
+            <strong class="metric-value" id="stat-ai-replies">0</strong>
+            <span class="metric-sub" id="stat-ai-status">Workers AI status loading...</span>
+          </div>
+        </div>
+        <div class="grid-two">
+          <div class="dash-card">
+            <div class="card-title"><h3>Platform Readiness & Connected Providers</h3></div>
+            <div id="overview-health" class="code-preview">Connect with a valid session token to load live workspace health.</div>
+          </div>
+          <div class="dash-card">
+            <div class="card-title"><h3>Recent Audit Activity</h3></div>
+            <div id="overview-audit" class="list-stack"><div class="muted-note">No audit events loaded.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. CONTACTS -->
+      <section class="view-panel" id="view-contacts">
+        <div class="grid-two">
+          <div class="dash-card">
+            <div class="card-title"><h3>Add Contact</h3></div>
+            <form id="form-add-contact" class="stack-form">
+              <input type="text" id="contact-name" class="input-modern" placeholder="Full Name" required />
+              <input type="text" id="contact-phone" class="input-modern" placeholder="Phone (03001234567 or +92...)" required />
+              <input type="text" id="contact-company" class="input-modern" placeholder="Company (optional)" />
+              <input type="email" id="contact-email" class="input-modern" placeholder="Email (optional)" />
+              <select id="contact-stage" class="input-modern">
+                <option value="lead">Stage: Lead</option>
+                <option value="contacted">Stage: Contacted</option>
+                <option value="qualified">Stage: Qualified</option>
+                <option value="won">Stage: Won</option>
+                <option value="lost">Stage: Lost</option>
+              </select>
+              <button type="submit" class="btn-primary">Save Contact</button>
+            </form>
+          </div>
+          <div class="dash-card">
+            <div class="card-title"><h3>Safe Cloud Import (CSV / TSV / .xlsx) & Legacy Desktop JSON</h3></div>
+            <div class="stack-form">
+              <input type="file" id="cloud-import-file" accept=".csv,.tsv,.txt,.xlsx" class="input-modern" />
+              <input type="text" id="cloud-import-list-name" class="input-modern" placeholder="Target List Name (optional)" />
+              <div class="row-actions">
+                <button class="btn-secondary" id="btn-preview-import">Preview Import</button>
+                <button class="btn-primary" id="btn-commit-import" disabled>Commit Valid Contacts</button>
+              </div>
+              <pre id="import-preview-output" class="code-preview">No spreadsheet loaded.</pre>
+              <hr class="divider" />
+              <input type="file" id="legacy-json-file" accept=".json" class="input-modern" />
+              <div class="row-actions">
+                <button class="btn-secondary" id="btn-legacy-dryrun">Dry-Run Legacy Migration</button>
+                <button class="btn-primary" id="btn-legacy-commit">Commit Legacy Migration</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dash-card">
+          <div class="card-title">
+            <h3>Contacts Directory</h3>
+            <div class="row-actions">
+              <input type="text" id="contacts-search" class="input-modern" placeholder="Search name, phone, company..." />
+              <select id="contacts-filter-stage" class="input-modern">
+                <option value="">All Stages</option>
+                <option value="lead">Lead</option>
+                <option value="contacted">Contacted</option>
+                <option value="qualified">Qualified</option>
+                <option value="won">Won</option>
+                <option value="lost">Lost</option>
+              </select>
+              <button class="btn-secondary" id="btn-search-contacts">Filter</button>
+            </div>
+          </div>
+          <div class="table-container">
+            <table class="data-table">
+              <thead><tr><th>Name</th><th>Phone</th><th>Company</th><th>Stage</th><th>Actions</th></tr></thead>
+              <tbody id="contacts-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. CONTACT LISTS -->
+      <section class="view-panel" id="view-lists">
+        <div class="grid-two">
+          <div class="dash-card">
+            <div class="card-title"><h3>Create Contact List</h3></div>
+            <form id="form-create-list" class="stack-form">
+              <input type="text" id="list-name" class="input-modern" placeholder="List Name" required />
+              <input type="text" id="list-desc" class="input-modern" placeholder="Description (optional)" />
+              <button type="submit" class="btn-primary">Create List</button>
+            </form>
+          </div>
+          <div class="dash-card">
+            <div class="card-title"><h3>Organization Contact Lists</h3></div>
+            <div id="lists-container" class="list-stack"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. TAGS & CONSENT -->
+      <section class="view-panel" id="view-tags">
+        <div class="grid-two">
+          <div class="dash-card">
+            <div class="card-title"><h3>Tags Management</h3></div>
+            <form id="form-create-tag" class="row-actions">
+              <input type="text" id="tag-name" class="input-modern" placeholder="Tag Name" required />
+              <input type="color" id="tag-color" value="#00a884" />
+              <button type="submit" class="btn-primary">Create Tag</button>
+            </form>
+            <div id="tags-container" class="tag-chips" style="margin-top:12px;"></div>
+          </div>
+          <div class="dash-card">
+            <div class="card-title"><h3>Consent & STOP Suppression Verification</h3></div>
+            <div class="stack-form">
+              <input type="text" id="consent-phone" class="input-modern" placeholder="Phone number (03001234567)" />
+              <div class="row-actions">
+                <button class="btn-secondary" id="btn-check-consent">Check Eligibility</button>
+                <button class="btn-primary" id="btn-optin-phone">Record Opt-In</button>
+                <button class="btn-danger-sm" id="btn-stop-phone">Record STOP</button>
+              </div>
+              <pre id="consent-result" class="code-preview">Enter a phone number to inspect opt-in/STOP status.</pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. CONVERSATIONS INBOX -->
+      <section class="view-panel" id="view-conversations">
+        <div class="grid-inbox">
+          <div class="dash-card">
+            <div class="card-title"><h3>Active Threads</h3></div>
+            <div id="conversations-list" class="list-stack"></div>
+          </div>
+          <div class="dash-card">
+            <div class="card-title">
+              <h3 id="active-conv-title">Select a Conversation</h3>
+              <div class="row-actions">
+                <span class="badge-tag" id="active-conv-mode">--</span>
+                <button class="btn-secondary" id="btn-conv-handoff">Transfer to Human</button>
+              </div>
+            </div>
+            <div id="conv-messages-box" class="messages-thread">No conversation selected.</div>
+            <form id="form-send-reply" class="stack-form" style="margin-top:10px;">
+              <div class="row-actions">
+                <select id="reply-account-id" class="input-modern"></select>
+                <select id="reply-template-id" class="input-modern"><option value="">Free-Form Text (24h Window)</option></select>
+              </div>
+              <div class="row-actions">
+                <input type="text" id="reply-body" class="input-modern" placeholder="Type WhatsApp message or customer query..." />
+                <button type="submit" class="btn-primary">Send via Meta API</button>
+                <button type="button" class="btn-secondary" id="btn-test-ai-reply">Draft/Send AI Reply</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- 6. WHATSAPP CONNECTION (OPTION A: META CLOUD API + OPTION B: UNOFFICIAL QR CODE) -->
+      <section class="view-panel" id="view-whatsapp">
+        <div class="compliance-banner" id="qr-compliance-banner">
+          <strong>Important Compliance Notice:</strong> Option B (QR Code / WhatsApp Web login) uses an <strong>unofficial protocol</strong> and is <strong>NOT</strong> the Official Meta WhatsApp Cloud API. Unofficial QR sessions may experience disconnections, restrictions, or WhatsApp account bans. We strongly recommend testing QR login on a separate test WhatsApp number first and using <strong>Option A (Official Meta API)</strong> for production business messaging.
+        </div>
+
+        <div class="grid-two">
+          <!-- Option A: Meta Official Cloud API -->
+          <div class="dash-card">
+            <div class="card-title">
+              <div>
+                <h3>Option A: Meta Official Cloud API</h3>
+                <div class="muted-note">Connect via Meta Business Manager (Recommended &amp; Compliant)</div>
+              </div>
+              <span class="badge-tag">Official Meta API</span>
+            </div>
+            <form id="form-connect-meta" class="stack-form">
+              <input type="text" id="meta-label" class="input-modern" placeholder="Account Label (e.g. Official Support Line)" required />
+              <input type="text" id="meta-phone" class="input-modern" placeholder="Display Phone (optional, auto-fetched on verify)" />
+              <input type="text" id="meta-waba-id" class="input-modern" placeholder="Meta WABA ID (numeric)" required />
+              <input type="text" id="meta-phone-id" class="input-modern" placeholder="Meta Phone Number ID (numeric)" required />
+              <input type="password" id="meta-access-token" class="input-modern" placeholder="Permanent / System User Access Token" required />
+              <input type="password" id="meta-app-secret" class="input-modern" placeholder="Meta App Secret" required />
+              <input type="text" id="meta-verify-token" class="input-modern" placeholder="Webhook Verify Token" required />
+              <div class="row-actions">
+                <button type="button" class="btn-secondary" id="btn-verify-meta-creds">Verify Credentials</button>
+                <button type="submit" class="btn-primary">Verify &amp; Connect Meta Account</button>
+              </div>
+              <div id="meta-verify-result" class="info-box" style="display:none;"></div>
+            </form>
+          </div>
+
+          <!-- Option B: Connect Using QR Code -->
+          <div class="dash-card">
+            <div class="card-title">
+              <div>
+                <h3>Option B: Connect Using QR Code</h3>
+                <div class="muted-note">WhatsApp → Linked Devices → Link a Device (Test number recommended)</div>
+              </div>
+              <span class="badge-warn">Unofficial Web Session</span>
+            </div>
+
+            <div class="stack-form">
+              <div class="row-actions">
+                <input type="text" id="qr-account-label" class="input-modern" placeholder="Session Label (e.g. Test Phone QR)" value="WhatsApp Web QR (Unofficial)" />
+                <button type="button" class="btn-primary" id="btn-qr-start">Generate QR Code</button>
+              </div>
+
+              <div class="qr-status-bar">
+                <span class="badge-tag" id="qr-status-pill">Disconnected</span>
+                <span class="muted-note" id="qr-countdown-label">Countdown: --</span>
+              </div>
+
+              <div class="qr-stage-box" id="qr-stage-box">
+                <div id="qr-placeholder" class="muted-note">
+                  Click <strong>Generate QR Code</strong> to start an encrypted tenant-isolated session via the Node.js QR Bridge service.
+                </div>
+                <img id="qr-code-image" class="qr-image" alt="WhatsApp QR Code" style="display:none;" />
+              </div>
+
+              <div class="info-box" id="qr-session-details">
+                <div><strong>Method:</strong> Unofficial WhatsApp Web (Baileys Bridge — Separate Node.js Service)</div>
+                <div><strong>Connected Number:</strong> <span id="qr-connected-phone">-</span></div>
+                <div><strong>Last Connected:</strong> <span id="qr-last-connected">-</span></div>
+                <div id="qr-error-box" class="qr-error-note" style="display:none;"></div>
+              </div>
+
+              <div class="row-actions">
+                <button type="button" class="btn-secondary" id="btn-qr-refresh" disabled>Refresh QR</button>
+                <button type="button" class="btn-secondary" id="btn-qr-reconnect" disabled>Reconnect</button>
+                <button type="button" class="btn-danger-sm" id="btn-qr-disconnect" disabled>Disconnect</button>
+              </div>
+
+              <details class="troubleshooting-box">
+                <summary>Troubleshooting QR Connection Issues</summary>
+                <ul>
+                  <li>If status shows <strong>Expired</strong>, click <strong>Refresh QR</strong> and scan within 60 seconds.</li>
+                  <li>Open WhatsApp on your test phone → <strong>Linked Devices</strong> → <strong>Link a Device</strong>.</li>
+                  <li>Ensure the separate <code>apps/qr-service</code> Node.js host is running and <code>QR_BRIDGE_URL</code> / <code>QR_BRIDGE_SECRET</code> are configured.</li>
+                  <li>Never mark Connected in the UI until WhatsApp authentication succeeds on the backend.</li>
+                </ul>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <div class="dash-card">
+          <div class="card-title">
+            <h3>Connected Numbers, Status &amp; Webhook Callback</h3>
+            <div class="info-box"><strong>Meta Webhook URL:</strong> <code id="webhook-callback-preview">/webhooks/meta</code></div>
+          </div>
+          <div id="wa-accounts-list" class="list-stack"></div>
+        </div>
+      </section>
+
+      <!-- 7. MESSAGE TEMPLATES -->
+      <section class="view-panel" id="view-templates">
+        <div class="grid-two">
+          <div class="dash-card">
+            <div class="card-title"><h3>Create Message Template</h3></div>
+            <form id="form-create-template" class="stack-form">
+              <select id="tpl-account-id" class="input-modern"><option value="">Any / Local Template</option></select>
+              <input type="text" id="tpl-name" class="input-modern" placeholder="Template Name" required />
+              <div class="row-actions">
+                <input type="text" id="tpl-language" class="input-modern" value="en_US" />
+                <select id="tpl-category" class="input-modern">
+                  <option value="UTILITY">UTILITY</option>
+                  <option value="MARKETING">MARKETING</option>
+                  <option value="AUTHENTICATION">AUTHENTICATION</option>
+                  <option value="CUSTOM_TEXT">CUSTOM_TEXT (24h Window)</option>
+                </select>
+                <select id="tpl-approval" class="input-modern">
+                  <option value="APPROVED">APPROVED</option>
+                  <option value="LOCAL">LOCAL</option>
+                  <option value="PENDING">PENDING</option>
+                </select>
+              </div>
+              <textarea id="tpl-body" class="input-modern" rows="4" placeholder="Hello {{1}}, thank you!" required></textarea>
+              <button type="submit" class="btn-primary">Save Template</button>
+            </form>
+          </div>
+          <div class="dash-card">
+            <div class="card-title"><h3>Templates Library</h3></div>
+            <div id="templates-list" class="list-stack"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 8. CAMPAIGN MANAGEMENT -->
+      <section class="view-panel" id="view-campaigns">
+        <div class="grid-two">
+          <div class="dash-card">
+            <div class="card-title"><h3>Create Cloud Campaign</h3></div>
+            <form id="form-create-campaign" class="stack-form">
+              <input type="text" id="camp-name" class="input-modern" placeholder="Campaign Name" required />
+              <select id="camp-account-id" class="input-modern" required></select>
+              <select id="camp-list-id" class="input-modern" required></select>
+              <select id="camp-template-id" class="input-modern"><option value="">None (24h Window Custom Text)</option></select>
+              <textarea id="camp-override" class="input-modern" rows="3" placeholder="Optional custom message"></textarea>
+              <div class="row-actions">
+                <select id="camp-schedule-type" class="input-modern">
+                  <option value="immediate">Immediate</option>
+                  <option value="once">Scheduled (Cron)</option>
+                </select>
+                <input type="datetime-local" id="camp-scheduled-at" class="input-modern" style="display:none;" />
+                <input type="number" id="camp-daily-limit" class="input-modern" value="30" min="1" max="10000" />
+              </div>
+              <button type="submit" class="btn-primary">Create Campaign</button>
+            </form>
+          </div>
+          <div class="dash-card">
+            <div class="card-title"><h3>Campaigns & Durable Queue Status</h3></div>
+            <div id="campaigns-list" class="list-stack"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 9. CAMPAIGN REPORTS -->
+      <section class="view-panel" id="view-reports">
+        <div class="dash-card">
+          <div class="card-title">
+            <h3>Campaign Delivery Reports</h3>
+            <div class="row-actions">
+              <select id="report-campaign-select" class="input-modern"></select>
+              <button class="btn-secondary" id="btn-load-report">Load Report</button>
+              <button class="btn-primary" id="btn-download-report-csv">ðŸ“¥ Safe CSV Export</button>
+            </div>
+          </div>
+          <div id="report-summary" class="info-box">Select a campaign above.</div>
+          <div class="table-container">
+            <table class="data-table">
+              <thead><tr><th>Contact</th><th>Phone</th><th>Status</th><th>WAMID</th><th>Attempts</th><th>Error</th></tr></thead>
+              <tbody id="report-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 10. AI CUSTOMER SUPPORT -->
+      <section class="view-panel" id="view-ai-support">
+        <div class="dash-card">
+          <div class="card-title">
+            <h3>AI Customer Support Bot (Cloudflare Workers AI)</h3>
+            <span class="badge-tag" id="workers-ai-badge">Checking binding...</span>
+          </div>
+          <form id="form-ai-config" class="stack-form">
+            <label class="row-actions">
+              <input type="checkbox" id="ai-enabled" />
+              <span>Enable AI Customer Support Replies for Inbound WhatsApp Messages</span>
+            </label>
+            <input type="text" id="ai-name" class="input-modern" placeholder="Agent Name" />
+            <input type="text" id="ai-model" class="input-modern" placeholder="Model ID (@cf/meta/llama-3.1-8b-instruct-fast)" />
+            <textarea id="ai-system-prompt" class="input-modern" rows="4" placeholder="Organization instructions (English & Urdu grounded policy)..."></textarea>
+            <div class="row-actions">
+              <label class="field-inline"><span>Daily AI Replies Cap</span><input type="number" id="ai-daily-limit" class="input-modern" min="1" max="10000" /></label>
+              <label class="field-inline grow"><span>Handoff Keywords (comma-separated)</span><input type="text" id="ai-handoff-keywords" class="input-modern" /></label>
+            </div>
+            <button type="submit" class="btn-primary">Save AI Agent Settings</button>
+          </form>
+        </div>
+      </section>
+
+      <!-- 11. KNOWLEDGE BASE -->
+      <section class="view-panel" id="view-knowledge">
+        <div class="grid-two">
+          <div class="dash-card">
+            <div class="card-title"><h3>Add Knowledge Base Document (D1 FTS5)</h3></div>
+            <form id="form-add-knowledge" class="stack-form">
+              <input type="text" id="kb-title" class="input-modern" placeholder="Document Title (e.g. Return Policy / ÙˆØ§Ù¾Ø³ÛŒ Ù¾Ø§Ù„ÛŒØ³ÛŒ)" required />
+              <div class="row-actions">
+                <select id="kb-language" class="input-modern">
+                  <option value="en">English (en)</option>
+                  <option value="ur">Urdu (ur)</option>
+                </select>
+                <input type="text" id="kb-category" class="input-modern" placeholder="Category (optional)" />
+              </div>
+              <textarea id="kb-content" class="input-modern" rows="5" placeholder="Paste factual policy, FAQs, pricing, or service details..." required></textarea>
+              <button type="submit" class="btn-primary">Save Knowledge Document</button>
+            </form>
+          </div>
+          <div class="dash-card">
+            <div class="card-title">
+              <h3>Knowledge Base & FTS5 Search</h3>
+              <div class="row-actions">
+                <input type="text" id="kb-search-input" class="input-modern" placeholder="Test FTS5 query..." />
+                <button class="btn-secondary" id="btn-kb-search">Search FTS5</button>
+              </div>
+            </div>
+            <div id="kb-list" class="list-stack"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 12. TEAM MEMBERS -->
+      <section class="view-panel" id="view-team">
+        <div class="grid-two">
+          <div class="dash-card">
+            <div class="card-title"><h3>Invite Team Member</h3></div>
+            <form id="form-invite-member" class="stack-form">
+              <input type="email" id="invite-email" class="input-modern" placeholder="Teammate Email" required />
+              <select id="invite-role" class="input-modern">
+                <option value="agent">Agent</option>
+                <option value="manager">Manager</option>
+                <option value="admin">Admin</option>
+              </select>
+              <button type="submit" class="btn-primary">Create Invitation Token</button>
+            </form>
+            <pre id="invite-token-output" class="code-preview" style="margin-top:8px;">Invite tokens appear here for manual sharing when email provider is unconfigured.</pre>
+            <hr class="divider" />
+            <div class="row-actions">
+              <input type="text" id="accept-invite-token" class="input-modern" placeholder="Paste invite token to join" />
+              <button class="btn-secondary" id="btn-accept-invite">Accept Invite</button>
+            </div>
+          </div>
+          <div class="dash-card">
+            <div class="card-title"><h3>Workspace Members & Pending Invites</h3></div>
+            <div id="team-members-list" class="list-stack"></div>
+            <h4 class="muted-note" style="margin-top:10px;">Pending Invitations</h4>
+            <div id="team-invites-list" class="list-stack"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 13. ROLES & PERMISSIONS -->
+      <section class="view-panel" id="view-roles">
+        <div class="dash-card">
+          <div class="card-title"><h3>Role-Based Access Control (Owner, Admin, Manager, Agent)</h3><span class="badge-tag" id="current-role-badge">--</span></div>
+          <div id="roles-matrix" class="list-stack"></div>
+        </div>
+      </section>
+
+      <!-- 14. USAGE & SUBSCRIPTION -->
+      <section class="view-panel" id="view-subscription">
+        <div class="dash-card">
+          <div class="card-title"><h3>SaaS Plan & Real Organization Usage</h3><span class="badge-tag" id="sub-status-badge">--</span></div>
+          <div class="info-box" id="billing-notice-box">Loading subscription state...</div>
+          <div class="metrics-grid" id="usage-meters"></div>
+          <div class="grid-two" id="plan-cards" style="margin-top:12px;"></div>
+        </div>
+      </section>
+
+      <!-- 15. ORGANIZATION SETTINGS -->
+      <section class="view-panel" id="view-settings">
+        <div class="grid-two">
+          <div class="dash-card">
+            <div class="card-title"><h3>Organization Settings</h3></div>
+            <form id="form-org-settings" class="stack-form">
+              <input type="text" id="org-name" class="input-modern" placeholder="Workspace Name" required />
+              <input type="text" id="org-country" class="input-modern" placeholder="Default Country Code (e.g. 92)" required />
+              <input type="text" id="org-timezone" class="input-modern" placeholder="Timezone (e.g. Asia/Karachi)" required />
+              <button type="submit" class="btn-primary">Update Settings</button>
+            </form>
+            <hr class="divider" />
+            <form id="form-create-org" class="row-actions">
+              <input type="text" id="new-org-name" class="input-modern" placeholder="New Workspace Name" required />
+              <button type="submit" class="btn-secondary">Create New Workspace</button>
+            </form>
+          </div>
+          <div class="dash-card">
+            <div class="card-title"><h3>Organization Audit Logs</h3></div>
+            <div id="settings-audit-logs" class="list-stack"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

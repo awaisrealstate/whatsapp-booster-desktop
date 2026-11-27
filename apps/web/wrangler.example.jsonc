@@ -1,0 +1,7 @@
+{
+  // Cloudflare Pages static deployment example (`apps/web`).
+  // Zero build step required — deploy static assets cleanly on Free Tier.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "wacrm-web",
+  "pages_build_output_dir": "."
+}

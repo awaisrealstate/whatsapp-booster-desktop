@@ -1,0 +1,24 @@
+{
+  "name": "@wacrm/db",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@wacrm/providers": "workspace:*",
+    "@wacrm/shared": "workspace:*",
+    "drizzle-orm": "^0.41.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250321.0"
+  }
+}

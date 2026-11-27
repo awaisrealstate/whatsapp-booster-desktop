@@ -64,7 +64,7 @@
   </div>
 
   <script>
-    const { ipcRenderer } = require('electron');
+    const hostBridge = window.electronHost;
     const dashboardFrame = document.getElementById('dashboard-frame');
     const waWebview = document.getElementById('wa-webview');
     const viewport = document.getElementById('viewport');
@@ -73,6 +73,24 @@
 
     let currentView = 'dashboard';
     let isConnected = false;
+    const ALLOWED_IFRAME_ACTIONS = new Set([
+      'DESKTOP_EXECUTE_DISPATCH',
+      'SWITCH_TO_WA_TAB',
+      'CHECK_HOST_WA_STATUS',
+      'HOST_LOAD_STATE',
+      'HOST_SAVE_STATE',
+      'HOST_SET_APP_SETTINGS',
+      'HOST_NOTIFY',
+      'HOST_FETCH_GOOGLE_SHEET'
+    ]);
+
+    function postToDashboard(payload) {
+      try {
+        if (dashboardFrame && dashboardFrame.contentWindow) {
+          dashboardFrame.contentWindow.postMessage(payload, '*');
+        }
+      } catch (e) {}
+    }
 
     function switchView(view) {
       currentView = view;
@@ -120,14 +138,12 @@
       }
 
       // Forward full status to dashboard
-      try {
-        dashboardFrame.contentWindow.postMessage({
-          action: 'HOST_WA_STATUS',
-          status: connected,
-          needsQR,
-          loading
-        }, '*');
-      } catch (e) {}
+      postToDashboard({
+        action: 'HOST_WA_STATUS',
+        status: connected,
+        needsQR,
+        loading
+      });
     }
 
     // Webview event listeners
@@ -142,10 +158,10 @@
       }
       if (event.channel === 'dispatch-result') {
         console.log('Received dispatch result from WhatsApp Webview:', event.args[0]);
-        dashboardFrame.contentWindow.postMessage({
+        postToDashboard({
           action: 'HOST_DISPATCH_RESULT',
           result: event.args[0]
-        }, '*');
+        });
       }
     });
 
@@ -157,9 +173,11 @@
 
     setInterval(checkWaStatus, 4000);
 
-    // Listen to messages from Dashboard iframe
+    // Listen to messages strictly from the embedded local Dashboard iframe
     window.addEventListener('message', async (event) => {
-      if (!event.data) return;
+      if (!event.data || typeof event.data !== 'object') return;
+      if (event.source !== dashboardFrame.contentWindow) return;
+      if (!ALLOWED_IFRAME_ACTIONS.has(event.data.action)) return;
 
       if (event.data.action === 'DESKTOP_EXECUTE_DISPATCH') {
         console.log('Host received dispatch request for:', event.data.contact);
@@ -180,33 +198,48 @@
       }
 
       if (event.data.action === 'HOST_LOAD_STATE') {
-        const diskState = await ipcRenderer.invoke('load-campaign-state');
-        const appSettings = await ipcRenderer.invoke('get-app-settings');
+        const diskState = hostBridge ? await hostBridge.loadCampaignState() : null;
+        const appSettings = hostBridge ? await hostBridge.getAppSettings() : null;
+        postToDashboard({
+          action: 'HOST_STATE_LOADED',
+          state: diskState,
+          appSettings
+        });
+      }
+
+      if (event.data.action === 'HOST_SAVE_STATE' && hostBridge) {
+        await hostBridge.saveCampaignState(event.data.state);
+      }
+
+      if (event.data.action === 'HOST_SET_APP_SETTINGS' && hostBridge) {
+        const updated = await hostBridge.setAppSettings(event.data.appSettings);
+        postToDashboard({
+          action: 'HOST_APP_SETTINGS_UPDATED',
+          appSettings: updated
+        });
+      }
+
+      if (event.data.action === 'HOST_NOTIFY' && hostBridge) {
+        hostBridge.showDesktopNotification(event.data.payload);
+      }
+
+      if (event.data.action === 'HOST_FETCH_GOOGLE_SHEET' && hostBridge) {
         try {
-          dashboardFrame.contentWindow.postMessage({
-            action: 'HOST_STATE_LOADED',
-            state: diskState,
-            appSettings
-          }, '*');
-        } catch (e) {}
-      }
-
-      if (event.data.action === 'HOST_SAVE_STATE') {
-        await ipcRenderer.invoke('save-campaign-state', event.data.state);
-      }
-
-      if (event.data.action === 'HOST_SET_APP_SETTINGS') {
-        const updated = await ipcRenderer.invoke('set-app-settings', event.data.appSettings);
-        try {
-          dashboardFrame.contentWindow.postMessage({
-            action: 'HOST_APP_SETTINGS_UPDATED',
-            appSettings: updated
-          }, '*');
-        } catch (e) {}
-      }
-
-      if (event.data.action === 'HOST_NOTIFY') {
-        ipcRenderer.send('show-desktop-notification', event.data.payload);
+          const text = await hostBridge.fetchGoogleSheetCsv(event.data.url);
+          postToDashboard({
+            action: 'HOST_GOOGLE_SHEET_RESULT',
+            requestId: event.data.requestId,
+            ok: true,
+            text
+          });
+        } catch (err) {
+          postToDashboard({
+            action: 'HOST_GOOGLE_SHEET_RESULT',
+            requestId: event.data.requestId,
+            ok: false,
+            error: err && err.message ? err.message : 'Unable to fetch Google Sheet.'
+          });
+        }
       }
     });
   </script>

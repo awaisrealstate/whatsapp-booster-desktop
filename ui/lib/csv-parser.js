@@ -336,6 +336,20 @@ window.WACRMParser = (function () {
     }
 
     if (isGoogleDocs) {
+      const fetchViaHost = (targetUrl) =>
+        new Promise((resolve) => {
+          if (!window.parent || window.parent === window) return resolve('');
+          const reqId = `gs_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+          const onMsg = (ev) => {
+            if (ev.source !== window.parent || !ev.data || ev.data.action !== 'HOST_GOOGLE_SHEET_RESULT' || ev.data.requestId !== reqId) return;
+            window.removeEventListener('message', onMsg);
+            resolve(ev.data.ok ? ev.data.text || '' : '');
+          };
+          window.addEventListener('message', onMsg);
+          setTimeout(() => { window.removeEventListener('message', onMsg); resolve(''); }, 10_000);
+          window.parent.postMessage({ action: 'HOST_FETCH_GOOGLE_SHEET', requestId: reqId, url: targetUrl }, '*');
+        });
+
       const exportUrl = formatGoogleSheetUrl(trimmed);
       let csvText = '';
       try {
@@ -344,6 +358,9 @@ window.WACRMParser = (function () {
           csvText = await response.text();
         }
       } catch (e) {}
+      if (!csvText) {
+        csvText = await fetchViaHost(exportUrl);
+      }
 
       // Fallback to gviz API if export was blocked or returned HTML login
       if (!csvText || csvText.includes('<!DOCTYPE html>') || csvText.includes('<html')) {
@@ -354,6 +371,9 @@ window.WACRMParser = (function () {
             const gvizResp = await fetch(gvizUrl);
             if (gvizResp.ok) csvText = await gvizResp.text();
           } catch (e) {}
+          if (!csvText) {
+            csvText = await fetchViaHost(gvizUrl);
+          }
         }
       }
 

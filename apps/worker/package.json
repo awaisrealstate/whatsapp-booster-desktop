@@ -1,0 +1,18 @@
+{
+  "name": "@wacrm/worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@wacrm/db": "workspace:*",
+    "@wacrm/providers": "workspace:*",
+    "@wacrm/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250321.0"
+  }
+}

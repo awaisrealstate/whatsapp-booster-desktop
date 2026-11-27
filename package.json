@@ -3,12 +3,16 @@
   "version": "1.0.0",
   "description": "Whatsapp Booster With Awais - Desktop Edition",
   "main": "main.js",
+  "packageManager": "pnpm@12.23.0",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
   },
   "author": "Awais",
   "license": "ISC",
   "devDependencies": {
-    "electron": "^45.5.0"
+    "electron": "^45.5.0",
+    "typescript": "^5.8.2"
   }
 }

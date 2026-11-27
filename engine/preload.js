@@ -51,20 +51,25 @@ ipcRenderer.on('check-connection', () => {
   });
 });
 
+let pendingDispatchToken = null;
+
 ipcRenderer.on('send-single-message', (event, data) => {
-  // Execute via DOM custom event or direct invocation
+  const token = data.dispatchToken || `tok_${Date.now()}`;
+  pendingDispatchToken = token;
   window.postMessage({
     action: 'WACRM_DESKTOP_DISPATCH',
     contact: data.contact,
     messageText: data.messageText,
     typingDelayMs: data.typingDelayMs || 2500,
-    dispatchToken: data.dispatchToken || `tok_${Date.now()}`
-  }, '*');
+    dispatchToken: token
+  }, 'https://web.whatsapp.com');
 });
 
-// Listen for dispatch result from the page
+// Listen for dispatch result from the page (validate origin + active dispatch token)
 window.addEventListener('message', (event) => {
-  if (event.data && event.data.action === 'WACRM_DESKTOP_RESULT') {
-    ipcRenderer.sendToHost('dispatch-result', event.data);
-  }
+  if (event.source !== window || event.origin !== 'https://web.whatsapp.com') return;
+  if (!event.data || event.data.action !== 'WACRM_DESKTOP_RESULT') return;
+  if (pendingDispatchToken && event.data.dispatchToken && event.data.dispatchToken !== pendingDispatchToken) return;
+  pendingDispatchToken = null;
+  ipcRenderer.sendToHost('dispatch-result', event.data);
 });

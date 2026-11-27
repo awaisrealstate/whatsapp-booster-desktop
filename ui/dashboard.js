@@ -332,7 +332,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       html += `
         <tr>
-          <td>${c.id || idx + 1}</td>
+          <td>${escapeHtml(c.id || idx + 1)}</td>
           <td><strong>${escapeHtml(c.name)}</strong></td>
           <td style="font-family:monospace;">${escapeHtml(c.phone)}</td>
           <td>${escapeHtml(company)}</td>
@@ -670,6 +670,12 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  function sanitizeCsvCell(value) {
+    const str = String(value == null ? '' : value);
+    const neutralized = /^\s*[=+\-@\t\r\n]/.test(str) ? `'${str}` : str;
+    return `"${neutralized.replace(/"/g, '""')}"`;
+  }
+
   // Export CSV Report
   document.getElementById('btn-export-csv').addEventListener('click', () => {
     if (!currentState || !currentState.contacts.length) {
@@ -679,7 +685,15 @@ document.addEventListener('DOMContentLoaded', () => {
     let csv = 'ID,Name,Phone,Company,Status,DispatchedAt,Error\n';
     currentState.contacts.forEach(c => {
       const co = (c.customVars && c.customVars.company) || '';
-      csv += `"${c.id}","${(c.name || '').replace(/"/g, '""')}","${c.phone}","${co.replace(/"/g, '""')}","${c.status}","${c.sentAt || ''}","${(c.errorMessage || '').replace(/"/g, '""')}"\n`;
+      csv += [
+        sanitizeCsvCell(c.id),
+        sanitizeCsvCell(c.name || ''),
+        sanitizeCsvCell(c.phone),
+        sanitizeCsvCell(co),
+        sanitizeCsvCell(c.status),
+        sanitizeCsvCell(c.sentAt || ''),
+        sanitizeCsvCell(c.errorMessage || '')
+      ].join(',') + '\n';
     });
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -690,6 +704,27 @@ document.addEventListener('DOMContentLoaded', () => {
     a.click();
     setTimeout(() => a.remove(), 500);
   });
+
+  // Export Reconciled Legacy State JSON for Non-Destructive Cloud CRM Migration
+  const btnExportLegacyState = document.getElementById('btn-export-legacy-state');
+  if (btnExportLegacyState) {
+    btnExportLegacyState.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ action: 'exportLegacyState' }, response => {
+        if (!response || !response.campaignState) {
+          alert('Unable to export state snapshot.');
+          return;
+        }
+        const blob = new Blob([JSON.stringify(response, null, 2)], { type: 'application/json;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `wacrm_legacy_state_${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => a.remove(), 500);
+      });
+    });
+  }
 
   // WhatsApp Connection Status Checker
   function checkWhatsAppConnection() {

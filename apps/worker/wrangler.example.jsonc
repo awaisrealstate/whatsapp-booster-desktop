@@ -1,0 +1,40 @@
+{
+  // Copy to wrangler.jsonc locally when ready for background Worker provisioning.
+  // Consolidates scheduled dispatch into a single Cron trigger (within 5-trigger Free limit).
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "wacrm-engine",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-03-01",
+  "vars": {
+    "META_GRAPH_VERSION": "v21.0"
+  },
+  "triggers": {
+    "crons": ["*/2 * * * *"]
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wacrm-db",
+      "database_id": "REPLACE_WITH_D1_ID"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "JOBS_QUEUE",
+        "queue": "wacrm-jobs"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "wacrm-jobs",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 3
+      }
+    ]
+  }
+}

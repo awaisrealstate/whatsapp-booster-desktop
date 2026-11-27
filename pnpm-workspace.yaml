@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+allowBuilds:
+  electron: true
+  "@whiskeysockets/baileys": false
+  protobufjs: false

@@ -1,0 +1,35 @@
+{
+  // Copy to wrangler.jsonc locally when ready for provisioning.
+  // Free-Tier $0 config: Workers + D1 + Queue producer + Workers AI (NO R2 activated unless approved).
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wacrm-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-03-01",
+  "vars": {
+    "APP_ENV": "development",
+    "ALLOWED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8788",
+    "LOG_LEVEL": "info",
+    "PASSWORD_AUTH_ENABLED": "false",
+    "META_GRAPH_VERSION": "v21.0",
+    "WEB_APP_URL": "http://127.0.0.1:8788"
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wacrm-db",
+      "database_id": "REPLACE_WITH_D1_ID",
+      "migrations_dir": "../../packages/db/migrations"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "JOBS_QUEUE",
+        "queue": "wacrm-jobs"
+      }
+    ]
+  }
+}

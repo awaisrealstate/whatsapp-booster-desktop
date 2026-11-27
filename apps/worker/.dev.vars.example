@@ -1,0 +1,7 @@
+# Copy to .dev.vars locally (never commit .dev.vars or real secrets)
+META_GRAPH_VERSION=v21.0
+# Must match ENCRYPTION_KEY set on apps/api so Queue/Cron worker can decrypt Meta credentials:
+# ENCRYPTION_KEY=replace-with-at-least-32-chars-random-secret
+# Optional separate Node.js QR service for background campaigns & AI auto-replies:
+# QR_BRIDGE_URL=http://127.0.0.1:8790
+# QR_BRIDGE_SECRET=replace-with-at-least-32-chars-bridge-hmac-secret
