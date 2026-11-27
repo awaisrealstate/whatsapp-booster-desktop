@@ -9,3 +9,8 @@ export * from './whatsapp.ts';
 export * from './campaigns.ts';
 export * from './saas.ts';
 export * from './ai.ts';
+export * from './scheduled-messages.ts';
+export * from './status.ts';
+export * from './ai-recommendations.ts';
+export * from './analytics.ts';
+export * from './assignment.ts';

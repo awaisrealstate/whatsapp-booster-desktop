@@ -47,6 +47,27 @@ export type ConversationChannelType = (typeof CONVERSATION_CHANNELS)[number];
 export const CONVERSATION_STATUSES = ['open', 'pending', 'resolved', 'snoozed'] as const;
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
 
+export const CONVERSATION_HANDLING_STATUSES = [
+  'unassigned',
+  'assigned_team',
+  'assigned_owner',
+  'ai_handling',
+  'human_handling',
+  'waiting_customer',
+  'resolved',
+  'closed',
+  'needs_attention'
+] as const;
+export type ConversationHandlingStatus = (typeof CONVERSATION_HANDLING_STATUSES)[number];
+
+export const CONVERSATION_ASSIGNMENT_TYPES = [
+  'unassigned',
+  'team_member',
+  'owner',
+  'ai'
+] as const;
+export type ConversationAssignmentType = (typeof CONVERSATION_ASSIGNMENT_TYPES)[number];
+
 export const MESSAGE_DIRECTIONS = ['inbound', 'outbound', 'internal_note'] as const;
 export type MessageDirection = (typeof MESSAGE_DIRECTIONS)[number];
 
@@ -343,6 +364,8 @@ export const conversations = sqliteTable(
       .references(() => contacts.id, { onDelete: 'cascade' }),
     channelType: text('channel_type').$type<ConversationChannelType>().notNull().default('manual_crm'),
     status: text('status').$type<ConversationStatus>().notNull().default('open'),
+    handlingStatus: text('handling_status').$type<ConversationHandlingStatus>().notNull().default('unassigned'),
+    assignmentType: text('assignment_type').$type<ConversationAssignmentType>().notNull().default('unassigned'),
     assignedUserId: text('assigned_user_id').references(() => users.id, { onDelete: 'set null' }),
     whatsappAccountId: text('whatsapp_account_id').references(() => whatsappAccounts.id, {
       onDelete: 'set null'
@@ -706,6 +729,21 @@ export const subscriptions = sqliteTable('subscriptions', {
   updatedAt: integer('updated_at').notNull()
 });
 
+export interface BusinessProfile {
+  businessName?: string;
+  businessDescription?: string;
+  productsAndServices?: string;
+  pricesAndPackages?: string;
+  openingHours?: string;
+  faqs?: string;
+  location?: string;
+  contactInfo?: string;
+  customerServiceInstructions?: string;
+  preferredLanguage?: string;
+  tone?: 'professional' | 'friendly' | 'formal' | 'casual' | string;
+  customInstructions?: string;
+}
+
 export const aiAgents = sqliteTable('ai_agents', {
   id: text('id').primaryKey(),
   organizationId: text('organization_id')
@@ -720,6 +758,7 @@ export const aiAgents = sqliteTable('ai_agents', {
   dailyNeuronLimit: integer('daily_neuron_limit').notNull().default(2500),
   supportedLanguages: text('supported_languages').notNull().default('en,ur'),
   handoffKeywordsJson: text('handoff_keywords_json').notNull(),
+  businessProfileJson: text('business_profile_json'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull()
 });
@@ -740,4 +779,167 @@ export const knowledgeDocs = sqliteTable(
     updatedAt: integer('updated_at').notNull()
   },
   (table) => [index('idx_knowledge_docs_org').on(table.organizationId, table.updatedAt)]
+);
+
+// ── Migration 0007: Scheduled Messages ───────────────────────────────────────
+
+export type ScheduledMessageStatus = 'pending' | 'processing' | 'sent' | 'failed' | 'cancelled';
+export type ScheduledMessageRecipientType = 'contact' | 'list' | 'phones';
+
+export const scheduledMessages = sqliteTable(
+  'scheduled_messages',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    whatsappAccountId: text('whatsapp_account_id').notNull(),
+    createdByUserId: text('created_by_user_id').notNull(),
+    status: text('status')
+      .$type<ScheduledMessageStatus>()
+      .notNull()
+      .default('pending'),
+    recipientType: text('recipient_type')
+      .$type<ScheduledMessageRecipientType>()
+      .notNull(),
+    recipientContactIds: text('recipient_contact_ids'),
+    recipientListId: text('recipient_list_id'),
+    recipientPhones: text('recipient_phones'),
+    messageText: text('message_text'),
+    templateId: text('template_id'),
+    templateVariables: text('template_variables'),
+    mediaUrl: text('media_url'),
+    mediaType: text('media_type'),
+    scheduledAt: integer('scheduled_at').notNull(),
+    timezone: text('timezone').notNull().default('UTC'),
+    executedAt: integer('executed_at'),
+    idempotencyKey: text('idempotency_key').unique(),
+    errorMessage: text('error_message'),
+    providerMessageIds: text('provider_message_ids'),
+    recipientCount: integer('recipient_count').notNull().default(0),
+    sentCount: integer('sent_count').notNull().default(0),
+    failedCount: integer('failed_count').notNull().default(0),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    index('idx_scheduled_messages_org_status').on(table.organizationId, table.status, table.scheduledAt),
+    index('idx_scheduled_messages_due').on(table.status, table.scheduledAt),
+  ]
+);
+
+// ── WhatsApp Status Records ───────────────────────────────────────────────────
+
+export type WaStatusRecordStatus = 'draft' | 'publishing' | 'published' | 'failed' | 'scheduled';
+
+export const waStatusRecords = sqliteTable(
+  'wa_status_records',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    whatsappAccountId: text('whatsapp_account_id').notNull(),
+    providerType: text('provider_type').notNull().default('unofficial_bridge'),
+    contentType: text('content_type').notNull(),
+    contentText: text('content_text'),
+    mediaUrl: text('media_url'),
+    mediaCaption: text('media_caption'),
+    backgroundColor: text('background_color'),
+    font: text('font'),
+    status: text('status')
+      .$type<WaStatusRecordStatus>()
+      .notNull()
+      .default('draft'),
+    scheduledAt: integer('scheduled_at'),
+    publishedAt: integer('published_at'),
+    errorMessage: text('error_message'),
+    providerResponse: text('provider_response'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [index('idx_wa_status_records_org').on(table.organizationId, table.createdAt)]
+);
+
+// ── Call Records ─────────────────────────────────────────────────────────────
+
+export const waCallRecords = sqliteTable(
+  'wa_call_records',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    whatsappAccountId: text('whatsapp_account_id').notNull(),
+    providerType: text('provider_type').notNull().default('unofficial_bridge'),
+    direction: text('direction'),
+    fromPhone: text('from_phone'),
+    toPhone: text('to_phone'),
+    status: text('status'),
+    startedAt: integer('started_at'),
+    endedAt: integer('ended_at'),
+    durationSeconds: integer('duration_seconds'),
+    providerCallId: text('provider_call_id').unique(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [index('idx_wa_call_records_org').on(table.organizationId, table.startedAt)]
+);
+
+// ── AI Business Recommendations ───────────────────────────────────────────────
+
+export type AiRecCategory = 'retention' | 'engagement' | 'campaign' | 'usage' | 'billing' | 'general';
+export type AiRiskLevel = 'low' | 'medium' | 'high';
+
+export const aiBusinessRecommendations = sqliteTable(
+  'ai_business_recommendations',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    targetOrgId: text('target_org_id').references(() => organizations.id, { onDelete: 'cascade' }),
+    generatedBy: text('generated_by').notNull().default('system'),
+    category: text('category').$type<AiRecCategory>().notNull(),
+    riskLevel: text('risk_level').$type<AiRiskLevel>(),
+    title: text('title').notNull(),
+    evidence: text('evidence').notNull(),
+    dateRangeStart: integer('date_range_start'),
+    dateRangeEnd: integer('date_range_end'),
+    recommendation: text('recommendation').notNull(),
+    suggestedAction: text('suggested_action'),
+    confidence: text('confidence'),
+    isPrediction: integer('is_prediction').notNull().default(0),
+    dismissedAt: integer('dismissed_at'),
+    actioned_at: integer('actioned_at'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_ai_recs_org').on(table.organizationId, table.createdAt),
+    index('idx_ai_recs_target').on(table.targetOrgId, table.createdAt),
+  ]
+);
+
+// ── Chat Assignment & AI Human Handover History ──────────────────────────────
+
+export const conversationAssignmentHistory = sqliteTable(
+  'conversation_assignment_history',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    conversationId: text('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    previousHandlerType: text('previous_handler_type'),
+    previousUserId: text('previous_user_id').references(() => users.id, { onDelete: 'set null' }),
+    newHandlerType: text('new_handler_type').notNull(),
+    newUserId: text('new_user_id').references(() => users.id, { onDelete: 'set null' }),
+    changedByUserId: text('changed_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    reason: text('reason'),
+    createdAt: integer('created_at').notNull()
+  },
+  (table) => [
+    index('idx_conv_assign_hist').on(table.organizationId, table.conversationId, table.createdAt)
+  ]
 );

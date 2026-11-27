@@ -108,11 +108,24 @@ export function createAuthRoutes(
 
     const creds = getOAuthCredentials(c.env, rawProvider);
     if (!creds.configured) {
+      const config = parseApiConfig(c.env);
+      const webAppUrl = config.webAppUrl || c.req.header('referer') || new URL(c.req.url).origin;
+      const acceptHeader = c.req.header('accept') || '';
+      const isBrowserNav = acceptHeader.includes('text/html') || c.req.header('sec-fetch-dest') === 'document';
+
+      if (isBrowserNav) {
+        try {
+          const redirectTarget = new URL(webAppUrl);
+          redirectTarget.hash = `error=oauth_not_configured&provider=${encodeURIComponent(rawProvider)}`;
+          return c.redirect(redirectTarget.toString(), 302);
+        } catch {}
+      }
+
       return c.json(
         {
           error: {
             code: 'OAUTH_NOT_CONFIGURED',
-            message: `${rawProvider} OAuth2 credentials are not configured on this Worker.`,
+            message: `${rawProvider} OAuth2 credentials are not configured on this Worker. Use email & password login or set ${rawProvider.toUpperCase()}_CLIENT_ID and ${rawProvider.toUpperCase()}_CLIENT_SECRET in .dev.vars / Cloudflare secrets.`,
             requestId: c.get('requestId')
           }
         },

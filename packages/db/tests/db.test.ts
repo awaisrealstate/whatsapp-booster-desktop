@@ -38,6 +38,7 @@ describe('Phase 1A/1B/2 Database Schema & Migrations', () => {
       tables.map((t) => t.name),
       [
         'ai_agents',
+        'ai_business_recommendations',
         'audit_logs',
         'auth_rate_limits',
         'campaign_recipients',
@@ -46,6 +47,7 @@ describe('Phase 1A/1B/2 Database Schema & Migrations', () => {
         'contact_lists',
         'contact_tags',
         'contacts',
+        'conversation_assignment_history',
         'conversations',
         'knowledge_docs',
         'legacy_imports',
@@ -56,6 +58,7 @@ describe('Phase 1A/1B/2 Database Schema & Migrations', () => {
         'organization_invites',
         'organization_members',
         'organizations',
+        'scheduled_messages',
         'sessions',
         'subscriptions',
         'suppression_list',
@@ -64,7 +67,9 @@ describe('Phase 1A/1B/2 Database Schema & Migrations', () => {
         'usage_counters',
         'users',
         'verification_tokens',
+        'wa_call_records',
         'wa_qr_sessions',
+        'wa_status_records',
         'webhook_events',
         'whatsapp_accounts'
       ]

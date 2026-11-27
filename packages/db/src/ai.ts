@@ -1,5 +1,13 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { MetaCloudProvider, QrBridgeClient, type WhatsAppProvider } from '@wacrm/providers';
+import {
+  MetaCloudProvider,
+  QrBridgeClient,
+  type WhatsAppProvider,
+  generateGeminiContent,
+  analyzeLeadsAndRetentionWithGemini,
+  DEFAULT_GEMINI_MODEL,
+  type LeadRetentionAnalysisResult
+} from '@wacrm/providers';
 import type { AppDatabase } from './client.ts';
 import { CrmError, checkCampaignEligibility } from './crm.ts';
 import { getPlanDefinition } from './plans.ts';
@@ -10,10 +18,12 @@ import {
   aiAgents,
   contacts,
   conversations,
+  conversationAssignmentHistory,
   knowledgeDocs,
   messages,
   organizations,
-  usageCounters
+  usageCounters,
+  type BusinessProfile
 } from './schema.ts';
 
 export interface WorkersAiBinding {
@@ -54,6 +64,36 @@ function parseKeywords(rawJson: string | null | undefined): string[] {
   return [...DEFAULT_HANDOFF_KEYWORDS];
 }
 
+function parseBusinessProfile(rawJson: string | null | undefined): BusinessProfile {
+  if (!rawJson) return {};
+  try {
+    const parsed = JSON.parse(rawJson);
+    if (parsed && typeof parsed === 'object') return parsed as BusinessProfile;
+  } catch {}
+  return {};
+}
+
+export function buildBusinessProfilePrompt(profile?: BusinessProfile | null): string {
+  if (!profile) return '';
+  const sections: string[] = [];
+
+  if (profile.businessName?.trim()) sections.push(`Business Name: ${profile.businessName.trim()}`);
+  if (profile.businessDescription?.trim()) sections.push(`Description: ${profile.businessDescription.trim()}`);
+  if (profile.productsAndServices?.trim()) sections.push(`Products & Services:\n${profile.productsAndServices.trim()}`);
+  if (profile.pricesAndPackages?.trim()) sections.push(`Prices & Packages:\n${profile.pricesAndPackages.trim()}`);
+  if (profile.openingHours?.trim()) sections.push(`Opening Hours: ${profile.openingHours.trim()}`);
+  if (profile.location?.trim()) sections.push(`Location: ${profile.location.trim()}`);
+  if (profile.contactInfo?.trim()) sections.push(`Contact Info: ${profile.contactInfo.trim()}`);
+  if (profile.faqs?.trim()) sections.push(`Frequently Asked Questions (FAQs):\n${profile.faqs.trim()}`);
+  if (profile.customerServiceInstructions?.trim()) sections.push(`Customer Service Instructions: ${profile.customerServiceInstructions.trim()}`);
+  if (profile.preferredLanguage?.trim()) sections.push(`Preferred Language: ${profile.preferredLanguage.trim()}`);
+  if (profile.tone?.trim()) sections.push(`Tone: ${profile.tone.trim()}`);
+  if (profile.customInstructions?.trim()) sections.push(`Custom Instructions: ${profile.customInstructions.trim()}`);
+
+  if (sections.length === 0) return '';
+  return `=== BUSINESS PROFILE & KNOWLEDGE ===\n${sections.join('\n\n')}`;
+}
+
 export function detectHumanHandoffRequest(text: string, keywords: readonly string[]): boolean {
   const lower = text.toLowerCase().trim();
   if (!lower) return false;
@@ -83,7 +123,8 @@ export async function getOrInitAiAgent(db: AppDatabase, ctx: OrgContext) {
     return {
       ...rows[0],
       isEnabled: Boolean(rows[0].isEnabled),
-      handoffKeywords: parseKeywords(rows[0].handoffKeywordsJson)
+      handoffKeywords: parseKeywords(rows[0].handoffKeywordsJson),
+      businessProfile: parseBusinessProfile(rows[0].businessProfileJson)
     };
   }
 
@@ -97,12 +138,13 @@ export async function getOrInitAiAgent(db: AppDatabase, ctx: OrgContext) {
       name: 'WhatsApp Support Assistant',
       systemPrompt:
         'You are a polite customer support assistant for our organization. Respond in English or Urdu matching the customer language using ONLY the provided Knowledge Base facts. Never guess or invent prices, policies, or dates. If the Knowledge Base lacks the answer, respond with [HANDOFF].',
-      modelId: '@cf/meta/llama-3.1-8b-instruct-fast',
+      modelId: DEFAULT_GEMINI_MODEL,
       isEnabled: 0,
       dailyReplyLimit: 50,
       dailyNeuronLimit: 2500,
       supportedLanguages: 'en,ur',
       handoffKeywordsJson: JSON.stringify(DEFAULT_HANDOFF_KEYWORDS),
+      businessProfileJson: null,
       createdAt: now,
       updatedAt: now
     })
@@ -116,7 +158,8 @@ export async function getOrInitAiAgent(db: AppDatabase, ctx: OrgContext) {
   return {
     ...created[0]!,
     isEnabled: Boolean(created[0]!.isEnabled),
-    handoffKeywords: parseKeywords(created[0]!.handoffKeywordsJson)
+    handoffKeywords: parseKeywords(created[0]!.handoffKeywordsJson),
+    businessProfile: parseBusinessProfile(created[0]!.businessProfileJson)
   };
 }
 
@@ -132,6 +175,7 @@ export async function updateAiAgentConfig(
     dailyNeuronLimit?: number;
     supportedLanguages?: string;
     handoffKeywords?: string[];
+    businessProfile?: BusinessProfile | null;
   }
 ) {
   const current = await getOrInitAiAgent(db, ctx);
@@ -160,6 +204,12 @@ export async function updateAiAgentConfig(
         patch.handoffKeywords !== undefined
           ? JSON.stringify(patch.handoffKeywords.map((k) => k.trim()).filter(Boolean))
           : current.handoffKeywordsJson,
+      businessProfileJson:
+        patch.businessProfile !== undefined
+          ? patch.businessProfile
+            ? JSON.stringify(patch.businessProfile)
+            : null
+          : current.businessProfileJson,
       updatedAt: now
     })
     .where(eq(aiAgents.organizationId, ctx.organizationId));
@@ -313,6 +363,8 @@ export async function handleAiSupportForConversation(
     conversationId: string;
     customerText: string;
     aiBinding?: WorkersAiBinding;
+    geminiApiKey?: string;
+    geminiFetchFn?: typeof fetch;
     encryptionKey?: string;
     provider?: WhatsAppProvider;
     qrBridge?: QrBridgeClient;
@@ -359,14 +411,60 @@ export async function handleAiSupportForConversation(
   if (!conv) {
     throw new CrmError(404, 'CONVERSATION_NOT_FOUND', 'Conversation not found.');
   }
+  const currentConv = conv;
 
   const contactRows = await db
     .select()
     .from(contacts)
-    .where(and(eq(contacts.organizationId, params.organizationId), eq(contacts.id, conv.contactId)))
+    .where(and(eq(contacts.organizationId, params.organizationId), eq(contacts.id, currentConv.contactId)))
     .limit(1);
   const contact = contactRows[0];
   if (!contact) throw new CrmError(404, 'CONTACT_NOT_FOUND', 'Contact not found.');
+
+  // 0. Human operator protection: Never reply while a human operator is handling or conversation is assigned to human
+  const isHumanHandled =
+    currentConv.assignmentType === 'owner' ||
+    currentConv.assignmentType === 'team_member' ||
+    currentConv.handlingStatus === 'human_handling' ||
+    currentConv.handlingStatus === 'assigned_owner' ||
+    currentConv.handlingStatus === 'assigned_team' ||
+    (currentConv.handlerMode === 'human' && currentConv.assignmentType !== 'unassigned' && currentConv.assignmentType !== 'ai');
+
+  if (isHumanHandled) {
+    return {
+      status: 'blocked',
+      replyText: null,
+      reason: 'Conversation is currently handled by a human operator. AI automatic replies are paused.',
+      matchedDocsCount: 0,
+      providerMessageId: null
+    };
+  }
+
+  async function recordEscalation(reason: string) {
+    await db
+      .update(conversations)
+      .set({
+        handlerMode: 'human',
+        handlingStatus: 'needs_attention',
+        handoffReason: reason,
+        updatedAt: now
+      })
+      .where(and(eq(conversations.organizationId, params.organizationId), eq(conversations.id, currentConv.id)));
+
+    const historyId = `cah_${crypto.randomUUID().replace(/-/g, '')}`;
+    await db.insert(conversationAssignmentHistory).values({
+      id: historyId,
+      organizationId: params.organizationId,
+      conversationId: currentConv.id,
+      previousHandlerType: currentConv.assignmentType,
+      previousUserId: currentConv.assignedUserId,
+      newHandlerType: 'unassigned',
+      newUserId: null,
+      changedByUserId: null,
+      reason: `AI Escalation: ${reason}`,
+      createdAt: now
+    });
+  }
 
   // 1. Check STOP suppression / opt-out strictly
   const elig = await checkCampaignEligibility(db, sysCtx, contact.phone);
@@ -382,10 +480,7 @@ export async function handleAiSupportForConversation(
 
   // 2. Human handoff keyword check
   if (detectHumanHandoffRequest(params.customerText, agent.handoffKeywords)) {
-    await db
-      .update(conversations)
-      .set({ handlerMode: 'human', handoffReason: 'Customer requested human agent', updatedAt: now })
-      .where(and(eq(conversations.organizationId, params.organizationId), eq(conversations.id, conv.id)));
+    await recordEscalation('Customer requested human agent');
     return {
       status: 'handoff',
       replyText: null,
@@ -414,10 +509,7 @@ export async function handleAiSupportForConversation(
   const currentAiNeurons = usageRow[0]?.aiNeuronsEst ?? 0;
 
   if (currentAiReplies >= effectiveDailyLimit || currentAiNeurons >= agent.dailyNeuronLimit) {
-    await db
-      .update(conversations)
-      .set({ handlerMode: 'human', handoffReason: 'Daily AI limit reached', updatedAt: now })
-      .where(and(eq(conversations.organizationId, params.organizationId), eq(conversations.id, conv.id)));
+    await recordEscalation('Daily AI limit reached');
     return {
       status: 'quota_exceeded',
       replyText: null,
@@ -427,32 +519,32 @@ export async function handleAiSupportForConversation(
     };
   }
 
-  // 4. Retrieve grounded Knowledge Base documents via D1 FTS5
+  // 4. Grounding: Check Business Profile and Knowledge Base documents
   const matchedDocs = await searchKnowledgeBase(d1, params.organizationId, params.customerText, 4);
-  if (matchedDocs.length === 0) {
-    await db
-      .update(conversations)
-      .set({ handlerMode: 'human', handoffReason: 'No knowledge base match', updatedAt: now })
-      .where(and(eq(conversations.organizationId, params.organizationId), eq(conversations.id, conv.id)));
+  const businessProfilePrompt = buildBusinessProfilePrompt(agent.businessProfile);
+  const hasKnowledge = Boolean(businessProfilePrompt.trim()) || matchedDocs.length > 0;
+
+  if (!hasKnowledge) {
+    await recordEscalation('No knowledge base match');
     return {
       status: 'no_knowledge',
       replyText: null,
-      reason: 'No matching Knowledge Base answer found; conversation assigned to human agent.',
+      reason: 'No matching Knowledge Base or Business Profile configured; conversation assigned to human agent.',
       matchedDocsCount: 0,
       providerMessageId: null
     };
   }
 
-  // 5. Verify actual Workers AI binding exists — NEVER fabricate AI output when unconfigured
-  if (!params.aiBinding) {
-    await db
-      .update(conversations)
-      .set({ handlerMode: 'human', handoffReason: 'WORKERS_AI_UNCONFIGURED', updatedAt: now })
-      .where(and(eq(conversations.organizationId, params.organizationId), eq(conversations.id, conv.id)));
+  // 5. Verify AI engine availability: Gemini API or Workers AI binding
+  const hasGemini = Boolean(params.geminiApiKey?.trim());
+  const hasWorkersAi = Boolean(params.aiBinding);
+
+  if (!hasGemini && !hasWorkersAi) {
+    await recordEscalation('AI_ENGINE_UNCONFIGURED');
     return {
       status: 'ai_unavailable',
       replyText: null,
-      reason: 'Cloudflare Workers AI binding (env.AI) is not configured.',
+      reason: 'Neither Google Gemini API (GEMINI_API_KEY) nor Cloudflare Workers AI binding (env.AI) is configured.',
       matchedDocsCount: matchedDocs.length,
       providerMessageId: null
     };
@@ -462,62 +554,101 @@ export async function handleAiSupportForConversation(
   const recentHistory = await db
     .select({ direction: messages.direction, body: messages.body })
     .from(messages)
-    .where(and(eq(messages.organizationId, params.organizationId), eq(messages.conversationId, conv.id)))
+    .where(and(eq(messages.organizationId, params.organizationId), eq(messages.conversationId, currentConv.id)))
     .orderBy(desc(messages.createdAt))
     .limit(6);
 
-  const knowledgeContext = matchedDocs
-    .map((d, i) => `[Doc ${i + 1}: ${d.title} (${d.language})]\n${d.content}`)
-    .join('\n\n');
+  const knowledgeContext = matchedDocs.length > 0
+    ? `\n\nKNOWLEDGE BASE ARTICLES:\n` +
+      matchedDocs
+        .map((d, i) => `[Doc ${i + 1}: ${d.title} (${d.language})]\n${d.content}`)
+        .join('\n\n')
+    : '';
 
-  const llmMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-    {
-      role: 'system',
-      content:
-        `${agent.systemPrompt}\n\nSTRICT RULES:\n` +
-        `1. Answer ONLY using the Knowledge Base context below. Do NOT invent prices, timings, links, or policies.\n` +
-        `2. Reply in the customer's language (English or Urdu).\n` +
-        `3. If the Knowledge Base does not contain the answer, respond strictly with [HANDOFF].\n\n` +
-        `KNOWLEDGE BASE:\n${knowledgeContext}`
-    },
-    ...recentHistory
-      .reverse()
-      .filter((m) => Boolean(m.body))
-      .map((m) => ({
-        role: (m.direction === 'inbound' ? 'user' : 'assistant') as 'user' | 'assistant',
-        content: String(m.body)
-      })),
-    { role: 'user', content: params.customerText }
-  ];
+  const systemInstruction =
+    `${agent.systemPrompt}\n\nSTRICT RULES:\n` +
+    `1. Answer using ONLY the provided Business Profile and Knowledge Base. Do NOT invent prices, timings, links, or policies not stated.\n` +
+    `2. Reply in the customer's language (${agent.businessProfile?.preferredLanguage || 'English or Urdu'}).\n` +
+    `3. Conversation tone: ${agent.businessProfile?.tone || 'polite and helpful'}.\n` +
+    `4. If the Business Profile and Knowledge Base do not contain the answer, respond strictly with [HANDOFF].\n\n` +
+    (businessProfilePrompt ? `${businessProfilePrompt}\n` : '') +
+    knowledgeContext;
 
   let rawAnswer = '';
-  try {
-    const aiOut = await params.aiBinding.run(agent.modelId, {
-      messages: llmMessages,
-      max_tokens: 300,
-      temperature: 0.2
-    });
-    rawAnswer = typeof aiOut === 'string' ? aiOut : String(aiOut?.response ?? '');
-  } catch (err) {
-    await db
-      .update(conversations)
-      .set({ handlerMode: 'human', handoffReason: 'Workers AI invocation error', updatedAt: now })
-      .where(and(eq(conversations.organizationId, params.organizationId), eq(conversations.id, conv.id)));
-    return {
-      status: 'ai_unavailable',
-      replyText: null,
-      reason: err instanceof Error ? err.message : 'Workers AI call failed.',
-      matchedDocsCount: matchedDocs.length,
-      providerMessageId: null
-    };
+
+  if (hasGemini) {
+    const geminiContents: Array<{ role: 'user' | 'model'; text: string }> = [
+      ...recentHistory
+        .reverse()
+        .filter((m) => Boolean(m.body))
+        .map((m) => ({
+          role: (m.direction === 'inbound' ? 'user' : 'model') as 'user' | 'model',
+          text: String(m.body)
+        })),
+      { role: 'user', text: params.customerText }
+    ];
+
+    const modelToUse = agent.modelId && agent.modelId.toLowerCase().includes('gemini')
+      ? agent.modelId
+      : DEFAULT_GEMINI_MODEL;
+
+    try {
+      const geminiRes = await generateGeminiContent({
+        apiKey: params.geminiApiKey!,
+        model: modelToUse,
+        systemInstruction,
+        contents: geminiContents,
+        temperature: 0.2,
+        maxOutputTokens: 400,
+        fetchFn: params.geminiFetchFn
+      });
+      rawAnswer = geminiRes.text;
+    } catch (err) {
+      await recordEscalation('Gemini AI invocation error');
+      return {
+        status: 'ai_unavailable',
+        replyText: null,
+        reason: err instanceof Error ? err.message : 'Google Gemini API call failed.',
+        matchedDocsCount: matchedDocs.length,
+        providerMessageId: null
+      };
+    }
+  } else {
+    // Workers AI fallback
+    const llmMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+      { role: 'system', content: systemInstruction },
+      ...recentHistory
+        .reverse()
+        .filter((m) => Boolean(m.body))
+        .map((m) => ({
+          role: (m.direction === 'inbound' ? 'user' : 'assistant') as 'user' | 'assistant',
+          content: String(m.body)
+        })),
+      { role: 'user', content: params.customerText }
+    ];
+
+    try {
+      const aiOut = await params.aiBinding!.run(agent.modelId, {
+        messages: llmMessages,
+        max_tokens: 300,
+        temperature: 0.2
+      });
+      rawAnswer = typeof aiOut === 'string' ? aiOut : String(aiOut?.response ?? '');
+    } catch (err) {
+      await recordEscalation('Workers AI invocation error');
+      return {
+        status: 'ai_unavailable',
+        replyText: null,
+        reason: err instanceof Error ? err.message : 'Workers AI call failed.',
+        matchedDocsCount: matchedDocs.length,
+        providerMessageId: null
+      };
+    }
   }
 
   const trimmedReply = rawAnswer.trim();
   if (!trimmedReply || trimmedReply.toUpperCase().includes('[HANDOFF]')) {
-    await db
-      .update(conversations)
-      .set({ handlerMode: 'human', handoffReason: 'AI triggered safe handoff', updatedAt: now })
-      .where(and(eq(conversations.organizationId, params.organizationId), eq(conversations.id, conv.id)));
+    await recordEscalation('AI triggered safe handoff');
     return {
       status: 'handoff',
       replyText: null,
@@ -575,6 +706,8 @@ export async function handleAiSupportForConversation(
     .update(conversations)
     .set({
       handlerMode: 'ai_bot',
+      assignmentType: 'ai',
+      handlingStatus: 'ai_handling',
       handoffReason: null,
       lastMessagePreview: trimmedReply.slice(0, 140),
       lastMessageAt: now,
@@ -611,3 +744,74 @@ export async function handleAiSupportForConversation(
     providerMessageId
   };
 }
+
+export async function analyzeConversationLeads(
+  db: AppDatabase,
+  ctx: OrgContext,
+  params: {
+    conversationId: string;
+    geminiApiKey: string;
+    model?: string;
+    fetchFn?: typeof fetch;
+  }
+): Promise<LeadRetentionAnalysisResult> {
+  const conv = await db
+    .select()
+    .from(conversations)
+    .where(
+      and(
+        eq(conversations.organizationId, ctx.organizationId),
+        eq(conversations.id, params.conversationId)
+      )
+    )
+    .limit(1);
+
+  if (!conv[0]) throw new CrmError(404, 'CONVERSATION_NOT_FOUND', 'Conversation not found.');
+
+  const contact = await db
+    .select()
+    .from(contacts)
+    .where(
+      and(
+        eq(contacts.organizationId, ctx.organizationId),
+        eq(contacts.id, conv[0].contactId)
+      )
+    )
+    .limit(1);
+
+  const msgRows = await db
+    .select({
+      direction: messages.direction,
+      body: messages.body,
+      createdAt: messages.createdAt
+    })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.organizationId, ctx.organizationId),
+        eq(messages.conversationId, params.conversationId)
+      )
+    )
+    .orderBy(desc(messages.createdAt))
+    .limit(30);
+
+  const agent = await getOrInitAiAgent(db, ctx);
+
+  return analyzeLeadsAndRetentionWithGemini({
+    apiKey: params.geminiApiKey,
+    model: params.model || (agent.modelId.toLowerCase().includes('gemini') ? agent.modelId : DEFAULT_GEMINI_MODEL),
+    businessProfile: agent.businessProfile,
+    customerName: contact[0]?.name,
+    customerPhone: contact[0]?.phone,
+    messages: msgRows
+      .reverse()
+      .filter((m) => Boolean(m.body))
+      .map((m) => ({
+        direction: m.direction as 'inbound' | 'outbound',
+        body: String(m.body),
+        timestamp: m.createdAt
+      })),
+    fetchFn: params.fetchFn
+  });
+}
+

@@ -3,6 +3,9 @@ import {
   handleAiSupportForConversation,
   processCampaignRecipientBatch,
   runScheduledCampaignTick,
+  getScheduledMessagesForExecution,
+  updateScheduledMessageStatus,
+  getDecryptedMetaCredentials,
   type CampaignQueueMessageBody,
   type CampaignQueueProducer,
   type WorkersAiBinding
@@ -26,6 +29,7 @@ export interface WorkerEngineEnv {
   META_GRAPH_VERSION?: string;
   QR_BRIDGE_URL?: string;
   QR_BRIDGE_SECRET?: string;
+  GEMINI_API_KEY?: string;
 }
 
 export interface EngineHandlerOptions {
@@ -87,6 +91,7 @@ export function createWorkerHandlers(options: EngineHandlerOptions = {}) {
               conversationId: msg.body.conversationId,
               customerText: msg.body.customerText,
               aiBinding: env.AI,
+              geminiApiKey: env.GEMINI_API_KEY,
               encryptionKey: env.ENCRYPTION_KEY,
               provider,
               qrBridge,

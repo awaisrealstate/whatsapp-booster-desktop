@@ -204,7 +204,11 @@ export function createWhatsappRoutes(customProvider?: WhatsAppProvider, customQr
     const db = createDb(c.env.DB!);
 
     if (!body.accountId) {
-      await enforcePlanLimit(db, ctx, 'whatsappAccounts', 1);
+      const existingAccounts = await listWhatsappAccounts(db, ctx);
+      const hasBridge = existingAccounts.some((a) => a.providerType === 'unofficial_bridge');
+      if (!hasBridge) {
+        await enforcePlanLimit(db, ctx, 'whatsappAccounts', 1);
+      }
     }
 
     const rl = await checkAndRecordLoginAttempt(db, {

@@ -23,3 +23,7 @@ WEB_APP_URL=http://127.0.0.1:8788
 # Optional separate Node.js WhatsApp Web QR service (@wacrm/qr-service):
 # QR_BRIDGE_URL=http://127.0.0.1:8790
 # QR_BRIDGE_SECRET=replace-with-at-least-32-chars-bridge-hmac-secret
+
+# Google Gemini AI Chatbot API Key (never commit actual key; set via `wrangler secret put GEMINI_API_KEY` in prod):
+# GEMINI_API_KEY=AIzaSy...
+

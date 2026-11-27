@@ -129,9 +129,12 @@ describe('Node.js @wacrm/qr-service Encrypted Persistence, Isolation & Lifecycle
       // Emit QR code from mock Baileys socket -> waiting_for_scan with data:image/png;base64,...
       const sock = sockets.get('org_1:acc_1')!;
       sock.emitter.emit('connection.update', { qr: '2@mock-baileys-qr-payload-token' });
-      await new Promise((r) => setTimeout(r, 80));
+      let waiting = await client.getSessionStatus('org_1', 'acc_1');
+      for (let i = 0; i < 15 && waiting.status !== 'waiting_for_scan'; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        waiting = await client.getSessionStatus('org_1', 'acc_1');
+      }
 
-      const waiting = await client.getSessionStatus('org_1', 'acc_1');
       assert.equal(waiting.status, 'waiting_for_scan');
       assert.ok(waiting.qrDataUrl?.startsWith('data:image/png;base64,'));
       assert.ok(waiting.qrExpiresAt && waiting.qrExpiresAt > Date.now());
@@ -139,9 +142,12 @@ describe('Node.js @wacrm/qr-service Encrypted Persistence, Isolation & Lifecycle
       // Simulate user scanning QR in Linked Devices -> connection 'open'
       sock.user = { id: '923007778899:4@s.whatsapp.net', name: 'Test Number' };
       sock.emitter.emit('connection.update', { connection: 'open' });
-      await new Promise((r) => setTimeout(r, 60));
+      let connected = await client.getSessionStatus('org_1', 'acc_1');
+      for (let i = 0; i < 15 && connected.status !== 'connected'; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        connected = await client.getSessionStatus('org_1', 'acc_1');
+      }
 
-      const connected = await client.getSessionStatus('org_1', 'acc_1');
       assert.equal(connected.status, 'connected');
       assert.equal(connected.phoneNumber, '+923007778899');
       assert.equal(connected.qrDataUrl, null);

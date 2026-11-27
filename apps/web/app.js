@@ -32,6 +32,7 @@ const state = {
   auditLogs: [],
   aiAgent: null,
   workersAiConfigured: false,
+  geminiConfigured: false,
   statusInfo: null,
   activeConversationId: null,
   activeQrAccountId: null,
@@ -39,8 +40,44 @@ const state = {
   qrPollTimer: null,
   qrCountdownTimer: null,
   pendingImportContacts: [],
-  lastReport: null
+  lastReport: null,
+  convFilter: 'all',
+  convSearch: '',
+  conversationMetrics: null,
+  activeConversation: null,
+  assignmentHistory: []
 };
+
+export function formatConversationStatusBadge(conv) {
+  if (!conv) return '<span class="badge-tag">--</span>';
+  const hs = conv.handlingStatus || 'unassigned';
+  const hm = conv.handlerMode || 'human';
+  const at = conv.assignmentType || 'unassigned';
+
+  if (hs === 'needs_attention') {
+    return '<span class="badge-tag" style="background:#c53030;color:#fff;">⚠️ Needs Attention</span>';
+  }
+  if (hs === 'ai_handling' || at === 'ai' || hm === 'ai_bot') {
+    return '<span class="badge-tag" style="background:#2b6cb0;color:#fff;">🤖 AI Handling</span>';
+  }
+  if (hs === 'assigned_owner' || at === 'owner') {
+    return '<span class="badge-tag" style="background:#6b46c1;color:#fff;">👑 Owner Assigned</span>';
+  }
+  if (hs === 'assigned_team' || at === 'team_member') {
+    const name = conv.assignedUserName ? `👤 ${conv.assignedUserName}` : '👤 Team Member';
+    return `<span class="badge-tag" style="background:#285e61;color:#fff;">${escapeHtml(name)}</span>`;
+  }
+  if (hs === 'human_handling') {
+    return '<span class="badge-tag" style="background:#2c7a7b;color:#fff;">👤 Human Handling</span>';
+  }
+  if (hs === 'waiting_customer') {
+    return '<span class="badge-tag" style="background:#744210;color:#fefcbf;">⏳ Waiting for Customer</span>';
+  }
+  if (hs === 'resolved' || conv.status === 'resolved') {
+    return '<span class="badge-tag" style="background:#22543d;color:#9ae6b4;">✓ Resolved</span>';
+  }
+  return '<span class="badge-tag" style="background:#4a5568;color:#cbd5e0;">Unassigned</span>';
+}
 
 export function formatQrStatusLabel(status) {
   switch (status) {
@@ -419,31 +456,77 @@ function renderCampaigns() {
 }
 
 function renderConversations() {
+  const m = state.conversationMetrics;
+  const metricsEl = document.getElementById('conv-metrics-summary');
+  if (metricsEl && m) {
+    metricsEl.textContent = `Total: ${m.total} | AI: ${m.aiHandled} | Owner: ${m.ownerHandled} | Team: ${m.teamHandled} | Needs Attention: ${m.needsAttention}`;
+  }
+
   document.getElementById('conversations-list').innerHTML = state.conversations.length
     ? state.conversations
         .map(
           (conv) => `
-        <div class="item-row ${conv.id === state.activeConversationId ? 'selected' : ''}" data-action="select-conv" data-id="${escapeHtml(conv.id)}" style="cursor:pointer;">
-          <div><strong>${escapeHtml(conv.contactName)}</strong> (${escapeHtml(conv.contactPhone)})
-            <div class="muted-note">${escapeHtml(conv.lastMessagePreview || 'No messages yet')}</div>
+        <div class="item-row ${conv.id === state.activeConversationId ? 'selected' : ''}" data-action="select-conv" data-id="${escapeHtml(conv.id)}" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding: 10px 12px; margin-bottom: 6px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06);">
+          <div style="flex:1; min-width: 0; padding-right: 8px;">
+            <div style="display:flex; align-items:center; gap:6px;">
+              <strong>${escapeHtml(conv.contactName || 'Unknown')}</strong>
+              <span class="muted-note" style="font-size:11px;">(${escapeHtml(conv.contactPhone || '')})</span>
+            </div>
+            <div class="muted-note" style="font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px;">
+              ${escapeHtml(conv.lastMessagePreview || 'No messages yet')}
+            </div>
           </div>
-          <span class="badge-tag">${escapeHtml(conv.handlerMode || 'human')}</span>
+          <div>
+            ${formatConversationStatusBadge(conv)}
+          </div>
         </div>`
         )
         .join('')
-    : '<div class="muted-note">No conversations yet.</div>';
+    : '<div class="muted-note">No conversations found.</div>';
 }
 
 function renderAiAndKnowledge(docsOverride = null) {
-  const badge = document.getElementById('workers-ai-badge');
-  badge.textContent = state.workersAiConfigured ? 'Workers AI Bound âœ“' : 'Workers AI Unconfigured (Safe Handoff)';
+  const workersBadge = document.getElementById('workers-ai-badge');
+  if (workersBadge) {
+    workersBadge.textContent = state.workersAiConfigured ? 'Workers AI Bound ✓' : 'Workers AI Unconfigured';
+    workersBadge.style.background = state.workersAiConfigured ? 'rgba(72, 187, 120, 0.2)' : 'rgba(160, 174, 192, 0.2)';
+  }
+
+  const geminiBadge = document.getElementById('gemini-ai-badge');
+  if (geminiBadge) {
+    geminiBadge.textContent = state.geminiConfigured ? 'Gemini 1.5 Flash Connected ✓' : 'Gemini Key Not Set (.dev.vars)';
+    geminiBadge.style.background = state.geminiConfigured ? 'rgba(66, 153, 225, 0.2)' : 'rgba(237, 137, 54, 0.2)';
+  }
+
   if (state.aiAgent) {
-    document.getElementById('ai-enabled').checked = Boolean(state.aiAgent.isEnabled);
-    document.getElementById('ai-name').value = state.aiAgent.name || '';
-    document.getElementById('ai-model').value = state.aiAgent.modelId || '';
-    document.getElementById('ai-system-prompt').value = state.aiAgent.systemPrompt || '';
-    document.getElementById('ai-daily-limit').value = String(state.aiAgent.dailyReplyLimit ?? 50);
-    document.getElementById('ai-handoff-keywords').value = (state.aiAgent.handoffKeywords || []).join(', ');
+    const elEnabled = document.getElementById('ai-enabled');
+    if (elEnabled) elEnabled.checked = Boolean(state.aiAgent.isEnabled);
+    const elName = document.getElementById('ai-name');
+    if (elName) elName.value = state.aiAgent.name || '';
+    const elModel = document.getElementById('ai-model-select') || document.getElementById('ai-model');
+    if (elModel) elModel.value = state.aiAgent.modelId || 'gemini-1.5-flash';
+    const elPrompt = document.getElementById('ai-system-prompt');
+    if (elPrompt) elPrompt.value = state.aiAgent.systemPrompt || '';
+    const elDaily = document.getElementById('ai-daily-limit');
+    if (elDaily) elDaily.value = String(state.aiAgent.dailyReplyLimit ?? 50);
+    const elHandoff = document.getElementById('ai-handoff-keywords');
+    if (elHandoff) elHandoff.value = (state.aiAgent.handoffKeywords || []).join(', ');
+
+    // Business Profile Fields
+    const p = state.aiAgent.businessProfile || {};
+    const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+    setVal('ai-biz-name', p.businessName);
+    setVal('ai-biz-desc', p.businessDescription);
+    setVal('ai-biz-products', p.productsAndServices);
+    setVal('ai-biz-pricing', p.pricesAndPackages);
+    setVal('ai-biz-hours', p.openingHours);
+    setVal('ai-biz-location', p.location);
+    setVal('ai-biz-contact', p.contactInfo);
+    setVal('ai-biz-faqs', p.faqs);
+    setVal('ai-biz-service-instructions', p.customerServiceInstructions);
+    setVal('ai-biz-language', p.preferredLanguage);
+    setVal('ai-biz-tone', p.tone || 'friendly and welcoming');
+    setVal('ai-biz-custom-instructions', p.customInstructions);
   }
 
   const docs = docsOverride ?? state.knowledgeDocs;
@@ -535,23 +618,129 @@ function renderSubscriptionAndSettings() {
 async function loadConversationMessages(convId) {
   state.activeConversationId = convId;
   renderConversations();
-  const data = await apiFetch(`/api/v1/crm/conversations/${encodeURIComponent(convId)}/messages`);
-  const conv = state.conversations.find((c) => c.id === convId);
-  document.getElementById('active-conv-title').textContent = conv ? `${conv.contactName} (${conv.contactPhone})` : 'Conversation';
-  document.getElementById('active-conv-mode').textContent = conv?.handlerMode || 'human';
-  const box = document.getElementById('conv-messages-box');
-  const msgs = data.items || [];
-  box.innerHTML = msgs.length
-    ? msgs
-        .map(
-          (m) => `
-        <div class="msg-bubble ${m.direction === 'outbound' ? 'outbound' : 'inbound'}">
-          <div>${escapeHtml(m.body || '')}</div>
-          <div class="msg-meta">${escapeHtml(m.direction)} Â· ${escapeHtml(m.status)} Â· ${new Date(m.createdAt).toLocaleString()}</div>
-        </div>`
-        )
-        .join('')
-    : '<div class="muted-note">No messages yet.</div>';
+
+  try {
+    const [msgData, convDetail, histData] = await Promise.all([
+      apiFetch(`/api/v1/crm/conversations/${encodeURIComponent(convId)}/messages`),
+      apiFetch(`/api/v1/crm/conversations/${encodeURIComponent(convId)}`).catch(() => null),
+      apiFetch(`/api/v1/crm/conversations/${encodeURIComponent(convId)}/assignment-history`).catch(() => ({ history: [] }))
+    ]);
+
+    const conv = convDetail?.conversation || state.conversations.find((c) => c.id === convId);
+    state.activeConversation = conv;
+    state.assignmentHistory = histData?.history || [];
+
+    document.getElementById('active-conv-title').textContent = conv
+      ? `${conv.contactName || 'Contact'} (${conv.contactPhone || ''})`
+      : 'Conversation';
+    const subEl = document.getElementById('active-conv-subtitle');
+    if (subEl && conv) {
+      subEl.textContent = `Channel: ${conv.channelType || 'WhatsApp'} · Status: ${conv.status || 'open'}`;
+    }
+
+    const statusEl = document.getElementById('active-conv-status');
+    if (statusEl && conv) {
+      statusEl.outerHTML = `<span id="active-conv-status">${formatConversationStatusBadge(conv)}</span>`;
+    }
+
+    const btnLeadIntel = document.getElementById('btn-analyze-leads');
+    if (btnLeadIntel) btnLeadIntel.style.display = 'inline-block';
+    const leadCard = document.getElementById('lead-analysis-card');
+    if (leadCard) leadCard.style.display = 'none';
+
+    // Render Chat Assignment Control Bar & Action Banner
+    const assignContainer = document.getElementById('chat-assignment-container');
+    if (assignContainer && conv) {
+      assignContainer.style.display = 'block';
+
+      // Update button highlights
+      const at = conv.assignmentType || 'unassigned';
+      const hm = conv.handlerMode || 'human';
+      const hs = conv.handlingStatus || 'unassigned';
+
+      const btnTeam = document.getElementById('btn-assign-team');
+      const btnOwner = document.getElementById('btn-assign-owner');
+      const btnAi = document.getElementById('btn-assign-ai');
+
+      if (btnTeam) btnTeam.style.borderColor = (at === 'team_member') ? '#38b2ac' : 'rgba(255,255,255,0.2)';
+      if (btnOwner) btnOwner.style.borderColor = (at === 'owner') ? '#9f7aea' : 'rgba(255,255,255,0.2)';
+      if (btnAi) btnAi.style.borderColor = (at === 'ai' || hm === 'ai_bot') ? '#4299e1' : 'rgba(255,255,255,0.2)';
+
+      // Update Action Banner & Takeover/Return buttons
+      const banner = document.getElementById('handling-action-banner');
+      const bannerText = document.getElementById('handling-banner-text');
+      const btnTakeover = document.getElementById('btn-takeover-from-ai');
+      const btnReturnAi = document.getElementById('btn-return-to-ai');
+
+      const isAiActive = at === 'ai' || hm === 'ai_bot' || hs === 'ai_handling';
+      const isNeedsAttention = hs === 'needs_attention';
+
+      if (isNeedsAttention) {
+        banner.style.background = 'rgba(229, 62, 62, 0.2)';
+        banner.style.borderColor = 'rgba(229, 62, 62, 0.6)';
+        bannerText.innerHTML = `<span>⚠️ <strong>Needs Human Attention!</strong> (AI escalated: ${escapeHtml(conv.handoffReason || 'Unhandled inquiry')})</span>`;
+        if (btnTakeover) {
+          btnTakeover.style.display = 'inline-block';
+          btnTakeover.textContent = '⚡ Take Over Conversation';
+        }
+        if (btnReturnAi) btnReturnAi.style.display = 'none';
+      } else if (isAiActive) {
+        banner.style.background = 'rgba(49, 130, 206, 0.15)';
+        banner.style.borderColor = 'rgba(49, 130, 206, 0.4)';
+        bannerText.innerHTML = `<span>🤖 <strong>AI Chatbot is handling this conversation.</strong> (Knowledge-grounded)</span>`;
+        if (btnTakeover) {
+          btnTakeover.style.display = 'inline-block';
+          btnTakeover.textContent = '⚡ Take Over from AI';
+        }
+        if (btnReturnAi) btnReturnAi.style.display = 'none';
+      } else {
+        const assignee = conv.assignedUserName ? ` (Assigned to: ${escapeHtml(conv.assignedUserName)})` : (at === 'owner' ? ' (Business Owner)' : '');
+        banner.style.background = 'rgba(44, 122, 123, 0.2)';
+        banner.style.borderColor = 'rgba(44, 122, 123, 0.5)';
+        bannerText.innerHTML = `<span>👤 <strong>Human is handling this conversation.</strong>${assignee}</span>`;
+        if (btnTakeover) btnTakeover.style.display = 'none';
+        if (btnReturnAi) btnReturnAi.style.display = 'inline-block';
+      }
+
+      // History count & entries
+      const histCountEl = document.getElementById('conv-history-count');
+      if (histCountEl) histCountEl.textContent = String(state.assignmentHistory.length);
+
+      const histEntriesEl = document.getElementById('conv-history-entries');
+      if (histEntriesEl) {
+        histEntriesEl.innerHTML = state.assignmentHistory.length
+          ? state.assignmentHistory
+              .map(
+                (h) => `
+              <div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                <strong>${new Date(h.createdAt).toLocaleTimeString()} (${new Date(h.createdAt).toLocaleDateString()})</strong>:
+                ${escapeHtml(h.previousHandlerType || 'unassigned')} ➔ <strong>${escapeHtml(h.newHandlerType)}</strong>
+                ${h.newUserName ? `(👤 ${escapeHtml(h.newUserName)})` : ''} ·
+                <span style="color:#a0aec0;">${escapeHtml(h.reason || 'Handler updated')}</span>
+                <span class="muted-note">by ${escapeHtml(h.changedByUserName || 'System')}</span>
+              </div>`
+              )
+              .join('')
+          : '<div class="muted-note">No assignment history recorded yet.</div>';
+      }
+    }
+
+    const box = document.getElementById('conv-messages-box');
+    const msgs = msgData.items || [];
+    box.innerHTML = msgs.length
+      ? msgs
+          .map(
+            (m) => `
+          <div class="msg-bubble ${m.direction === 'outbound' ? 'outbound' : 'inbound'}">
+            <div>${escapeHtml(m.body || '')}</div>
+            <div class="msg-meta">${escapeHtml(m.direction)} · ${escapeHtml(m.status)} · ${new Date(m.createdAt).toLocaleString()}</div>
+          </div>`
+          )
+          .join('')
+      : '<div class="muted-note">No messages yet.</div>';
+  } catch (err) {
+    showBanner(`Failed to load conversation: ${err.message}`, true);
+  }
 }
 
 function renderReport(report) {
@@ -592,7 +781,11 @@ async function refreshAllData() {
     if (search) q.set('search', search);
     if (stage) q.set('pipelineStage', stage);
 
-    const [acc, contacts, lists, tags, tpls, camps, convs, aiAgent, kb, members, invites, roles, sub, audits] =
+    const convUrl = `/api/v1/crm/conversations?limit=50` +
+      (state.convFilter && state.convFilter !== 'all' ? `&filter=${encodeURIComponent(state.convFilter)}` : '') +
+      (state.convSearch ? `&search=${encodeURIComponent(state.convSearch)}` : '');
+
+    const [acc, contacts, lists, tags, tpls, camps, convs, convMetrics, aiAgent, kb, members, invites, roles, sub, audits] =
       await Promise.all([
         apiFetch('/api/v1/whatsapp/accounts'),
         apiFetch(`/api/v1/crm/contacts?${q.toString()}`),
@@ -600,7 +793,8 @@ async function refreshAllData() {
         apiFetch('/api/v1/crm/tags'),
         apiFetch('/api/v1/templates'),
         apiFetch('/api/v1/campaigns'),
-        apiFetch('/api/v1/crm/conversations'),
+        apiFetch(convUrl),
+        apiFetch('/api/v1/crm/conversations-metrics').catch(() => ({ metrics: null })),
         apiFetch('/api/v1/ai/agent').catch(() => ({ agent: null, workersAiConfigured: false })),
         apiFetch('/api/v1/ai/knowledge').catch(() => ({ items: [] })),
         apiFetch('/api/v1/team/members').catch(() => ({ items: [] })),
@@ -617,8 +811,10 @@ async function refreshAllData() {
     state.templates = tpls.items || [];
     state.campaigns = camps.items || [];
     state.conversations = convs.items || [];
+    state.conversationMetrics = convMetrics?.metrics || null;
     state.aiAgent = aiAgent.agent;
     state.workersAiConfigured = Boolean(aiAgent.workersAiConfigured);
+    state.geminiConfigured = Boolean(aiAgent.geminiConfigured);
     state.knowledgeDocs = kb.items || [];
     state.teamMembers = members.items || [];
     state.teamInvites = invites.items || [];
@@ -645,6 +841,16 @@ function captureOAuthHashToken() {
       localStorage.setItem('wacrm_bearer_token', tok);
       history.replaceState(null, '', window.location.pathname + window.location.search);
     }
+  } else if (hash.includes('error=oauth_not_configured')) {
+    const banner = document.getElementById('oauth-warning-banner');
+    if (banner) {
+      banner.style.display = 'block';
+      banner.innerHTML = `<strong>⚠️ Google OAuth2 is not configured on this Worker.</strong><br/>
+      Please sign in or create an account using Email & Password below, or configure <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> on your Cloudflare Worker / <code>.dev.vars</code>.`;
+    }
+    const devPanel = document.getElementById('dev-login-panel');
+    if (devPanel) devPanel.style.display = 'flex';
+    history.replaceState(null, '', window.location.pathname + window.location.search);
   }
 }
 
@@ -670,9 +876,27 @@ function wireEvents() {
   });
 
   for (const prov of ['google', 'github']) {
-    document.getElementById(`btn-oauth-${prov}`).addEventListener('click', () => {
+    document.getElementById(`btn-oauth-${prov}`).addEventListener('click', async () => {
       const base = document.getElementById('input-api-base').value.trim().replace(/\/+$/, '');
       localStorage.setItem('wacrm_api_base', base);
+
+      // Pre-check provider configuration before leaving page
+      try {
+        const provRes = await fetch(`${base}/api/v1/auth/oauth/providers`).then((r) => r.json());
+        const target = provRes?.providers?.find((p) => p.provider === prov);
+        if (target && !target.configured) {
+          const banner = document.getElementById('oauth-warning-banner');
+          if (banner) {
+            banner.style.display = 'block';
+            banner.innerHTML = `<strong>⚠️ ${prov === 'google' ? 'Google' : 'GitHub'} OAuth2 is not configured on this Worker.</strong><br/>
+            Please use the Email & Password form below to sign in or create an account, or add <code>${prov.toUpperCase()}_CLIENT_ID</code> and <code>${prov.toUpperCase()}_CLIENT_SECRET</code> to your Worker secrets.`;
+          }
+          const p = document.getElementById('dev-login-panel');
+          if (p) p.style.display = 'flex';
+          return;
+        }
+      } catch {}
+
       window.location.href = `${base}/api/v1/auth/oauth/${prov}/start`;
     });
   }
@@ -1094,6 +1318,91 @@ function wireEvents() {
     } catch (err) { showBanner(err.message, true); }
   });
 
+  document.getElementById('btn-assign-team')?.addEventListener('click', async () => {
+    if (!state.activeConversationId) return showBanner('Select a conversation first.', true);
+    try {
+      await apiFetch(`/api/v1/crm/conversations/${encodeURIComponent(state.activeConversationId)}/assign`, {
+        method: 'POST',
+        body: JSON.stringify({ handlerType: 'team_member' })
+      });
+      showBanner('Conversation assigned to Team Member.');
+      await refreshAllData();
+      await loadConversationMessages(state.activeConversationId);
+    } catch (err) { showBanner(err.message, true); }
+  });
+
+  document.getElementById('btn-assign-owner')?.addEventListener('click', async () => {
+    if (!state.activeConversationId) return showBanner('Select a conversation first.', true);
+    try {
+      await apiFetch(`/api/v1/crm/conversations/${encodeURIComponent(state.activeConversationId)}/assign`, {
+        method: 'POST',
+        body: JSON.stringify({ handlerType: 'owner' })
+      });
+      showBanner('Conversation assigned to Business Owner.');
+      await refreshAllData();
+      await loadConversationMessages(state.activeConversationId);
+    } catch (err) { showBanner(err.message, true); }
+  });
+
+  document.getElementById('btn-assign-ai')?.addEventListener('click', async () => {
+    if (!state.activeConversationId) return showBanner('Select a conversation first.', true);
+    try {
+      await apiFetch(`/api/v1/crm/conversations/${encodeURIComponent(state.activeConversationId)}/assign`, {
+        method: 'POST',
+        body: JSON.stringify({ handlerType: 'ai' })
+      });
+      showBanner('Conversation assigned to AI Chatbot.');
+      await refreshAllData();
+      await loadConversationMessages(state.activeConversationId);
+    } catch (err) { showBanner(err.message, true); }
+  });
+
+  document.getElementById('btn-takeover-from-ai')?.addEventListener('click', async () => {
+    if (!state.activeConversationId) return showBanner('Select a conversation first.', true);
+    try {
+      await apiFetch(`/api/v1/crm/conversations/${encodeURIComponent(state.activeConversationId)}/takeover`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: 'Manual human takeover from AI' })
+      });
+      showBanner('You took over this conversation. AI automatic replies are now paused.');
+      await refreshAllData();
+      await loadConversationMessages(state.activeConversationId);
+    } catch (err) { showBanner(err.message, true); }
+  });
+
+  document.getElementById('btn-return-to-ai')?.addEventListener('click', async () => {
+    if (!state.activeConversationId) return showBanner('Select a conversation first.', true);
+    if (!confirm('Return this conversation to AI Chatbot? The bot will resume automatic replies for future incoming messages.')) return;
+    try {
+      await apiFetch(`/api/v1/crm/conversations/${encodeURIComponent(state.activeConversationId)}/return-to-ai`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: 'Returned to AI Chatbot' })
+      });
+      showBanner('Returned to AI Chatbot. AI will handle future incoming messages.');
+      await refreshAllData();
+      await loadConversationMessages(state.activeConversationId);
+    } catch (err) { showBanner(err.message, true); }
+  });
+
+  document.getElementById('btn-toggle-assignment-history')?.addEventListener('click', () => {
+    const drawer = document.getElementById('conv-history-drawer');
+    if (drawer) drawer.style.display = drawer.style.display === 'none' ? 'block' : 'none';
+  });
+
+  document.getElementById('conv-filter-select')?.addEventListener('change', async (e) => {
+    state.convFilter = e.target.value;
+    await refreshAllData();
+  });
+
+  let searchConvTimeout = null;
+  document.getElementById('conv-search-input')?.addEventListener('input', (e) => {
+    state.convSearch = e.target.value.trim();
+    if (searchConvTimeout) clearTimeout(searchConvTimeout);
+    searchConvTimeout = setTimeout(async () => {
+      await refreshAllData();
+    }, 300);
+  });
+
   document.getElementById('btn-test-ai-reply').addEventListener('click', async () => {
     if (!state.activeConversationId) return showBanner('Select a conversation first.', true);
     const customerText = document.getElementById('reply-body').value.trim();
@@ -1108,24 +1417,78 @@ function wireEvents() {
     } catch (err) { showBanner(err.message, true); }
   });
 
-  document.getElementById('form-ai-config').addEventListener('submit', async (e) => {
+  document.getElementById('form-ai-config')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
       const kws = document.getElementById('ai-handoff-keywords').value.split(',').map((s) => s.trim()).filter(Boolean);
+      const modelVal = (document.getElementById('ai-model-select') || document.getElementById('ai-model'))?.value.trim() || 'gemini-1.5-flash';
+      const getVal = (id) => document.getElementById(id)?.value.trim() || '';
+
       await apiFetch('/api/v1/ai/agent', {
         method: 'PATCH',
         body: JSON.stringify({
           isEnabled: document.getElementById('ai-enabled').checked,
           name: document.getElementById('ai-name').value.trim(),
-          modelId: document.getElementById('ai-model').value.trim(),
+          modelId: modelVal,
           systemPrompt: document.getElementById('ai-system-prompt').value.trim(),
           dailyReplyLimit: Number(document.getElementById('ai-daily-limit').value) || 50,
-          handoffKeywords: kws
+          handoffKeywords: kws,
+          businessProfile: {
+            businessName: getVal('ai-biz-name'),
+            businessDescription: getVal('ai-biz-desc'),
+            productsAndServices: getVal('ai-biz-products'),
+            pricesAndPackages: getVal('ai-biz-pricing'),
+            openingHours: getVal('ai-biz-hours'),
+            location: getVal('ai-biz-location'),
+            contactInfo: getVal('ai-biz-contact'),
+            faqs: getVal('ai-biz-faqs'),
+            customerServiceInstructions: getVal('ai-biz-service-instructions'),
+            preferredLanguage: getVal('ai-biz-language'),
+            tone: getVal('ai-biz-tone') || 'friendly and welcoming',
+            customInstructions: getVal('ai-biz-custom-instructions')
+          }
         })
       });
       await refreshAllData();
-      showBanner('AI Support Agent configuration saved.');
+      showBanner('AI Chatbot & Business Profile saved successfully.');
     } catch (err) { showBanner(err.message, true); }
+  });
+
+  document.getElementById('btn-analyze-leads')?.addEventListener('click', async () => {
+    if (!state.activeConversationId) return showBanner('Select a conversation first.', true);
+    const card = document.getElementById('lead-analysis-card');
+    if (card) {
+      card.style.display = 'block';
+      card.innerHTML = '<em>Analyzing conversation with Google Gemini...</em>';
+    }
+    try {
+      const res = await apiFetch(`/api/v1/ai/conversations/${encodeURIComponent(state.activeConversationId)}/analyze-leads`, {
+        method: 'POST'
+      });
+      const a = res.analysis;
+      if (card && a) {
+        const intentColor = a.leadIntentScore === 'high' ? '#38a169' : a.leadIntentScore === 'medium' ? '#d69e2e' : '#718096';
+        card.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <strong>🧠 Gemini Lead Intelligence & Retention Analysis</strong>
+            <span class="badge-tag" style="background:${intentColor}; color:#fff; text-transform:uppercase; font-size:11px; padding:2px 8px; border-radius:4px;">Intent: ${escapeHtml(a.leadIntentScore)}</span>
+          </div>
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; margin-bottom: 8px;">
+            <div><strong>Interested:</strong> ${a.isInterested ? '✅ Yes' : '❌ No'}</div>
+            <div><strong>Pricing Query:</strong> ${a.pricingQueryDetected ? '💰 Yes' : 'No'}</div>
+            <div><strong>Sentiment:</strong> ${escapeHtml(a.sentiment)}</div>
+            <div><strong>Churn Risk:</strong> ${escapeHtml(a.churnRisk)}</div>
+          </div>
+          <div style="margin-bottom:6px;"><strong>Summary:</strong> ${escapeHtml(a.summary)}</div>
+          ${a.followUpRequired ? `<div style="color:#ecc94b; margin-bottom:4px;"><strong>Follow-up Needed:</strong> ${escapeHtml(a.followUpReason || 'Follow-up requested')}</div>` : ''}
+          <div><strong>Suggested Action:</strong> 💡 <em>${escapeHtml(a.suggestedAction)}</em></div>
+        `;
+      }
+    } catch (err) {
+      if (card) {
+        card.innerHTML = `<span style="color:#e53e3e;">Lead Analysis Error: ${escapeHtml(err.message)}</span>`;
+      }
+    }
   });
 
   document.getElementById('form-add-knowledge').addEventListener('submit', async (e) => {

@@ -36,6 +36,15 @@ import {
   importLegacyStateToOrg,
   checkAndRecordLoginAttempt,
   assertLoginNotRateLimited,
+  assignConversation,
+  takeOverConversationFromAi,
+  returnConversationToAi,
+  listConversationAssignmentHistory,
+  getConversationById,
+  listFilteredConversations,
+  getConversationMetricsForOrg,
+  updateConversationHandlingStatus,
+  CONVERSATION_HANDLING_STATUSES,
   PIPELINE_STAGES,
   CONSENT_STATUSES,
   SUPPRESSION_REASONS,
@@ -176,6 +185,26 @@ const UpdateMessageStatusSchema = z.object({
   status: z.enum(MESSAGE_STATUSES),
   providerMessageId: z.string().max(128).nullable().optional(),
   errorMessage: z.string().max(500).nullable().optional()
+});
+
+const AssignConversationSchema = z.object({
+  handlerType: z.enum(['team_member', 'owner', 'ai']),
+  targetUserId: z.string().max(64).nullable().optional(),
+  reason: z.string().max(255).nullable().optional()
+});
+
+const TakeoverConversationSchema = z.object({
+  reason: z.string().max(255).nullable().optional()
+});
+
+const ReturnToAiSchema = z.object({
+  reason: z.string().max(255).nullable().optional()
+});
+
+const UpdateConversationStatusSchema = z.object({
+  handlingStatus: z.enum(CONVERSATION_HANDLING_STATUSES).optional(),
+  status: z.enum(CONVERSATION_STATUSES).optional(),
+  reason: z.string().max(255).nullable().optional()
 });
 
 const LegacyStateSchema = z
@@ -494,12 +523,93 @@ export function createCrmRoutes() {
         ? (statusParam as (typeof CONVERSATION_STATUSES)[number])
         : undefined;
 
-    const items = await listConversations(db, ctx, {
+    const filterParam = c.req.query('filter') as any;
+    const searchParam = c.req.query('search') || undefined;
+
+    const items = await listFilteredConversations(db, ctx, {
+      filter: filterParam,
+      search: searchParam,
       status,
       limit: Number(c.req.query('limit') ?? 50) || 50,
       offset: Number(c.req.query('offset') ?? 0) || 0
     });
     return c.json({ items });
+  });
+
+  crm.get('/conversations-metrics', async (c) => {
+    const ctx = c.get('orgContext')!;
+    const db = createDb(c.env.DB!);
+    const metrics = await getConversationMetricsForOrg(db, ctx);
+    return c.json({ metrics });
+  });
+
+  crm.get('/conversations/:id', async (c) => {
+    const ctx = c.get('orgContext')!;
+    const db = createDb(c.env.DB!);
+    const conversation = await getConversationById(db, ctx, c.req.param('id'));
+    if (!conversation) {
+      throw new CrmError(404, 'CONVERSATION_NOT_FOUND', 'Conversation not found.');
+    }
+    return c.json({ conversation });
+  });
+
+  crm.post('/conversations/:id/assign', async (c) => {
+    const ctx = c.get('orgContext')!;
+    assertOrgPermission(ctx, 'inbox:reply');
+    const body = await parseJsonBody(c, AssignConversationSchema);
+    const db = createDb(c.env.DB!);
+    const conversation = await assignConversation(db, ctx, {
+      conversationId: c.req.param('id'),
+      handlerType: body.handlerType,
+      targetUserId: body.targetUserId,
+      reason: body.reason
+    });
+    return c.json({ conversation });
+  });
+
+  crm.post('/conversations/:id/takeover', async (c) => {
+    const ctx = c.get('orgContext')!;
+    assertOrgPermission(ctx, 'inbox:reply');
+    const body = await parseJsonBody(c, TakeoverConversationSchema);
+    const db = createDb(c.env.DB!);
+    const conversation = await takeOverConversationFromAi(db, ctx, {
+      conversationId: c.req.param('id'),
+      reason: body.reason
+    });
+    return c.json({ conversation });
+  });
+
+  crm.post('/conversations/:id/return-to-ai', async (c) => {
+    const ctx = c.get('orgContext')!;
+    assertOrgPermission(ctx, 'inbox:reply');
+    const body = await parseJsonBody(c, ReturnToAiSchema);
+    const db = createDb(c.env.DB!);
+    const conversation = await returnConversationToAi(db, ctx, {
+      conversationId: c.req.param('id'),
+      reason: body.reason
+    });
+    return c.json({ conversation });
+  });
+
+  crm.patch('/conversations/:id/status', async (c) => {
+    const ctx = c.get('orgContext')!;
+    assertOrgPermission(ctx, 'inbox:reply');
+    const body = await parseJsonBody(c, UpdateConversationStatusSchema);
+    const db = createDb(c.env.DB!);
+    const conversation = await updateConversationHandlingStatus(db, ctx, {
+      conversationId: c.req.param('id'),
+      handlingStatus: body.handlingStatus,
+      status: body.status,
+      reason: body.reason
+    });
+    return c.json({ conversation });
+  });
+
+  crm.get('/conversations/:id/assignment-history', async (c) => {
+    const ctx = c.get('orgContext')!;
+    const db = createDb(c.env.DB!);
+    const history = await listConversationAssignmentHistory(db, ctx, c.req.param('id'));
+    return c.json({ history });
   });
 
   crm.get('/conversations/:id/messages', async (c) => {

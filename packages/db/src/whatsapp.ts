@@ -918,6 +918,44 @@ export async function getOrCreateQrBridgeAccount(
     return getWhatsappAccountForOrg(db, ctx, existing[0].id);
   }
 
+  if (!input.accountId) {
+    const existingBridge = await db
+      .select()
+      .from(whatsappAccounts)
+      .where(
+        and(
+          eq(whatsappAccounts.organizationId, ctx.organizationId),
+          eq(whatsappAccounts.providerType, 'unofficial_bridge')
+        )
+      )
+      .limit(1);
+
+    if (existingBridge[0]) {
+      const existingQr = await db
+        .select()
+        .from(waQrSessions)
+        .where(
+          and(
+            eq(waQrSessions.organizationId, ctx.organizationId),
+            eq(waQrSessions.whatsappAccountId, existingBridge[0].id)
+          )
+        )
+        .limit(1);
+
+      if (!existingQr[0]) {
+        await db.insert(waQrSessions).values({
+          id: crypto.randomUUID(),
+          organizationId: ctx.organizationId,
+          whatsappAccountId: existingBridge[0].id,
+          status: 'connecting',
+          createdAt: now,
+          updatedAt: now
+        });
+      }
+      return getWhatsappAccountForOrg(db, ctx, existingBridge[0].id);
+    }
+  }
+
   const orgAccounts = await db
     .select({ id: whatsappAccounts.id })
     .from(whatsappAccounts)

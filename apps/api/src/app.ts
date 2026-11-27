@@ -16,6 +16,10 @@ import { createTemplateRoutes } from './routes/templates.ts';
 import { createCampaignRoutes } from './routes/campaigns.ts';
 import { createAiRoutes } from './routes/ai.ts';
 import { createSaasRoutes } from './routes/saas.ts';
+import { createComposerRoutes } from './routes/composer.ts';
+import { createStatusRoutes } from './routes/status.ts';
+import { createAnalyticsRoutes } from './routes/analytics.ts';
+import { createBusinessAiRoutes } from './routes/business-ai.ts';
 import type { EmailSender } from './auth/email.ts';
 
 export interface AppOptions {
@@ -205,6 +209,12 @@ export function createApp(options: AppOptions = {}) {
   // Phase 5 & 7: AI Support, Knowledge Base, RBAC Team, Invites & SaaS Subscriptions
   app.route('/api/v1/ai', createAiRoutes(options.metaProvider, options.qrBridge));
   app.route('/api/v1', createSaasRoutes());
+
+  // Phase 8+: Scheduler, WhatsApp Status, Analytics, Business AI
+  app.route('/api/v1/messages/scheduled', createComposerRoutes(options.metaProvider, options.qrBridge));
+  app.route('/api/v1/whatsapp/status', createStatusRoutes());
+  app.route('/api/v1/analytics', createAnalyticsRoutes());
+  app.route('/api/v1/business-ai', createBusinessAiRoutes());
 
   // Request Validation Endpoint (exercises @wacrm/shared validation without CRM/WA writes)
   app.post('/api/v1/validate/contact', async (c) => {

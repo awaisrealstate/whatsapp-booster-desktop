@@ -21,7 +21,9 @@ import {
   TenantAccessError,
   updateOrganizationMemberRole,
   updateOrganizationPlanManual,
-  updateOrganizationSettings
+  updateOrganizationSettings,
+  getPlatformAdminConversationsOverview,
+  recordAuditLog
 } from '@wacrm/db';
 import { parseApiConfig, parsePlatformAdminEmails, type WorkerBindings } from '../env.ts';
 import { requireOrgSession, type AuthVariables } from '../middleware/auth.ts';
@@ -236,6 +238,23 @@ export function createSaasRoutes() {
       status: body.status
     });
     return c.json(updated);
+  });
+
+  saas.get('/admin/conversations/overview', async (c) => {
+    const ctx = c.get('orgContext')!;
+    const admin = await assertPlatformAdmin(c.env, ctx.userId);
+    const db = createDb(c.env.DB!);
+
+    await recordAuditLog(db, {
+      organizationId: ctx.organizationId,
+      actorUserId: admin.userId,
+      action: 'platform_admin.conversations_inspected',
+      entityType: 'platform',
+      entityId: null
+    });
+
+    const overview = await getPlatformAdminConversationsOverview(db);
+    return c.json(overview);
   });
 
   return saas;

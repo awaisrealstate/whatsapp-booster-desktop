@@ -34,6 +34,7 @@ export interface WorkerBindings {
   QR_BRIDGE_URL?: string;
   QR_BRIDGE_SECRET?: string;
   PLATFORM_ADMIN_EMAILS?: string;
+  GEMINI_API_KEY?: string;
 }
 
 export function parsePlatformAdminEmails(env: WorkerBindings | undefined): Set<string> {
@@ -55,6 +56,7 @@ export interface ApiConfig {
   googleOAuthConfigured: boolean;
   githubOAuthConfigured: boolean;
   workersAiConfigured: boolean;
+  geminiConfigured: boolean;
   qrBridgeConfigured: boolean;
   webAppUrl: string | null;
 }
@@ -91,6 +93,7 @@ export function parseApiConfig(env: WorkerBindings | undefined): ApiConfig {
   const googleOAuthConfigured = Boolean(env?.GOOGLE_CLIENT_ID?.trim() && env?.GOOGLE_CLIENT_SECRET?.trim());
   const githubOAuthConfigured = Boolean(env?.GITHUB_CLIENT_ID?.trim() && env?.GITHUB_CLIENT_SECRET?.trim());
   const workersAiConfigured = Boolean(env?.AI);
+  const geminiConfigured = Boolean(env?.GEMINI_API_KEY?.trim());
   const qrBridgeConfigured = Boolean(
     env?.QR_BRIDGE_URL?.trim() && env?.QR_BRIDGE_SECRET && env.QR_BRIDGE_SECRET.trim().length >= 16
   );
@@ -106,6 +109,7 @@ export function parseApiConfig(env: WorkerBindings | undefined): ApiConfig {
     googleOAuthConfigured,
     githubOAuthConfigured,
     workersAiConfigured,
+    geminiConfigured,
     qrBridgeConfigured,
     webAppUrl
   };

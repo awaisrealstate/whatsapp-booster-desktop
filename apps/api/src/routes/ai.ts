@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import {
+  analyzeConversationLeads,
   assertOrgPermission,
   createDb,
   createKnowledgeDoc,
@@ -11,12 +12,28 @@ import {
   handoffConversationToHuman,
   listKnowledgeDocs,
   searchKnowledgeBase,
-  updateAiAgentConfig
+  updateAiAgentConfig,
+  type BusinessProfile
 } from '@wacrm/db';
 import { MetaCloudProvider, type QrBridgeClient, type WhatsAppProvider } from '@wacrm/providers';
 import { createOptionalQrBridgeClient, parseApiConfig, type WorkerBindings } from '../env.ts';
 import { requireOrgSession, type AuthVariables } from '../middleware/auth.ts';
 import { parseJsonBody } from '../middleware/validate.ts';
+
+const BusinessProfileSchema = z.object({
+  businessName: z.string().trim().max(120).optional(),
+  businessDescription: z.string().trim().max(2000).optional(),
+  productsAndServices: z.string().trim().max(4000).optional(),
+  pricesAndPackages: z.string().trim().max(4000).optional(),
+  openingHours: z.string().trim().max(500).optional(),
+  faqs: z.string().trim().max(8000).optional(),
+  location: z.string().trim().max(500).optional(),
+  contactInfo: z.string().trim().max(500).optional(),
+  customerServiceInstructions: z.string().trim().max(2000).optional(),
+  preferredLanguage: z.string().trim().max(50).optional(),
+  tone: z.string().trim().max(50).optional(),
+  customInstructions: z.string().trim().max(4000).optional()
+}).nullable().optional();
 
 const UpdateAgentSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
@@ -26,7 +43,8 @@ const UpdateAgentSchema = z.object({
   dailyReplyLimit: z.number().int().min(1).max(10000).optional(),
   dailyNeuronLimit: z.number().int().min(100).max(100000).optional(),
   supportedLanguages: z.string().max(40).optional(),
-  handoffKeywords: z.array(z.string().max(50)).max(30).optional()
+  handoffKeywords: z.array(z.string().max(50)).max(30).optional(),
+  businessProfile: BusinessProfileSchema
 });
 
 const CreateKnowledgeSchema = z.object({
@@ -61,7 +79,14 @@ export function createAiRoutes(customProvider?: WhatsAppProvider, customQrBridge
     const config = parseApiConfig(c.env);
     return c.json({
       agent,
-      workersAiConfigured: config.workersAiConfigured
+      workersAiConfigured: config.workersAiConfigured,
+      geminiConfigured: config.geminiConfigured,
+      availableModels: [
+        { id: 'gemini-1.5-flash', name: 'Google Gemini 1.5 Flash (Recommended - Fast & Natural)', provider: 'google' },
+        { id: 'gemini-2.0-flash', name: 'Google Gemini 2.0 Flash (Next-Gen Gemini)', provider: 'google' },
+        { id: 'gemini-1.5-pro', name: 'Google Gemini 1.5 Pro (Deep Business Reasoning)', provider: 'google' },
+        { id: '@cf/meta/llama-3.1-8b-instruct-fast', name: 'Meta Llama 3.1 8B (Cloudflare Workers AI)', provider: 'cloudflare' }
+      ]
     });
   });
 
@@ -121,12 +146,36 @@ export function createAiRoutes(customProvider?: WhatsAppProvider, customQrBridge
       conversationId: c.req.param('id'),
       customerText: body.customerText,
       aiBinding: c.env.AI,
+      geminiApiKey: c.env.GEMINI_API_KEY,
       encryptionKey: c.env.ENCRYPTION_KEY,
       provider,
       qrBridge: createOptionalQrBridgeClient(c.env, customQrBridge),
       sendOutboundReply: body.sendOutboundReply ?? false
     });
     return c.json(result);
+  });
+
+  ai.post('/conversations/:id/analyze-leads', async (c) => {
+    const ctx = c.get('orgContext')!;
+    assertOrgPermission(ctx, 'crm:read');
+    const db = createDb(c.env.DB!);
+    const geminiKey = c.env.GEMINI_API_KEY?.trim();
+    if (!geminiKey) {
+      return c.json(
+        {
+          error: {
+            code: 'GEMINI_NOT_CONFIGURED',
+            message: 'Google Gemini API key (GEMINI_API_KEY) is not configured on this Worker.'
+          }
+        },
+        503
+      );
+    }
+    const analysis = await analyzeConversationLeads(db, ctx, {
+      conversationId: c.req.param('id'),
+      geminiApiKey: geminiKey
+    });
+    return c.json({ analysis });
   });
 
   ai.post('/conversations/:id/handoff', async (c) => {

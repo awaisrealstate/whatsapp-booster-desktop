@@ -39,15 +39,16 @@
       <button class="btn-primary" id="btn-save-connection">Connect</button>
       <button class="btn-secondary" id="btn-oauth-google">Google OAuth2</button>
       <button class="btn-secondary" id="btn-oauth-github">GitHub OAuth2</button>
-      <button class="btn-secondary" id="btn-toggle-dev-login">Dev Login</button>
+      <button class="btn-secondary" id="btn-toggle-dev-login">Email / Dev Login</button>
       <button class="btn-danger-sm" id="btn-signout" style="display:none;">Sign Out</button>
     </div>
+    <div id="oauth-warning-banner" class="banner banner-warning" style="display:none; margin: 8px 0; background: rgba(221, 107, 32, 0.15); border: 1px solid rgba(221, 107, 32, 0.4); color: #ecc94b; padding: 8px 12px; border-radius: 6px; font-size: 12px;"></div>
     <div id="dev-login-panel" class="dev-login-panel" style="display:none;">
       <input type="email" id="login-email" class="input-modern" placeholder="Email" />
       <input type="password" id="login-password" class="input-modern" placeholder="Password (min 8 chars)" />
-      <button class="btn-primary" id="btn-dev-login">Sign In (Dev Only)</button>
-      <button class="btn-secondary" id="btn-dev-register">Create Local Account (Dev)</button>
-      <span class="muted-note">Password login stays gated OFF in Cloudflare Workers production; OAuth2 PKCE is preferred.</span>
+      <button class="btn-primary" id="btn-dev-login">Sign In</button>
+      <button class="btn-secondary" id="btn-dev-register">Create Account</button>
+      <span class="muted-note">Sign in directly with your email and password, or use Google/GitHub OAuth2 when configured.</span>
     </div>
     <div id="global-banner" class="banner" style="display:none;"></div>
   </section>
@@ -222,16 +223,88 @@
         <div class="grid-inbox">
           <div class="dash-card">
             <div class="card-title"><h3>Active Threads</h3></div>
+            <div class="inbox-filter-controls" style="margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px;">
+              <input type="text" id="conv-search-input" class="input-modern" placeholder="🔍 Search name or phone..." style="width: 100%;" />
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <label for="conv-filter-select" class="muted-note" style="font-size: 11px; white-space: nowrap;">Filter:</label>
+                <select id="conv-filter-select" class="input-modern" style="padding: 4px 8px; font-size: 12px; width: 100%;">
+                  <option value="all">All Conversations</option>
+                  <option value="my">My Conversations</option>
+                  <option value="owner">Owner Assigned</option>
+                  <option value="ai">AI Handling</option>
+                  <option value="human">Human Handling</option>
+                  <option value="unassigned">Unassigned</option>
+                  <option value="needs_attention">Needs Human Attention ⚠️</option>
+                  <option value="resolved">Resolved</option>
+                </select>
+              </div>
+              <div id="conv-metrics-summary" class="muted-note" style="font-size: 11px;"></div>
+            </div>
             <div id="conversations-list" class="list-stack"></div>
           </div>
           <div class="dash-card">
-            <div class="card-title">
-              <h3 id="active-conv-title">Select a Conversation</h3>
-              <div class="row-actions">
-                <span class="badge-tag" id="active-conv-mode">--</span>
-                <button class="btn-secondary" id="btn-conv-handoff">Transfer to Human</button>
+            <div class="card-title" style="flex-wrap: wrap; gap: 8px;">
+              <div>
+                <h3 id="active-conv-title" style="margin: 0;">Select a Conversation</h3>
+                <div class="muted-note" id="active-conv-subtitle" style="font-size: 12px; margin-top: 2px;"></div>
+              </div>
+              <div class="row-actions" id="active-conv-badges">
+                <span class="badge-tag" id="active-conv-status">--</span>
+                <span class="badge-tag" id="active-conv-mode" style="display:none;">--</span>
+                <button class="btn-secondary" id="btn-analyze-leads" style="display:none; font-size: 11px; padding: 4px 8px;">🧠 Lead Intel (Gemini)</button>
+                <button class="btn-secondary" id="btn-conv-handoff" style="display:none;">Transfer to Human</button>
               </div>
             </div>
+
+            <!-- LEAD INTELLIGENCE CARD -->
+            <div id="lead-analysis-card" style="display:none; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 12px;"></div>
+
+            <!-- CHAT ASSIGNMENT CONTROL PANEL (Top of Chat) -->
+            <div id="chat-assignment-container" style="display: none; margin-bottom: 12px;">
+              <!-- 1. Who will handle this conversation? -->
+              <div class="assignment-control-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;">
+                <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #a0aec0; margin-bottom: 6px;">
+                  Who will handle this conversation?
+                </div>
+                <div class="assignment-btn-group" style="display: flex; gap: 8px; flex-wrap: wrap;">
+                  <button type="button" class="btn-secondary" id="btn-assign-team" style="font-size: 12px; padding: 6px 12px;">
+                    👤 Option A — Team Member
+                  </button>
+                  <button type="button" class="btn-secondary" id="btn-assign-owner" style="font-size: 12px; padding: 6px 12px;">
+                    👑 Option B — Business Owner
+                  </button>
+                  <button type="button" class="btn-secondary" id="btn-assign-ai" style="font-size: 12px; padding: 6px 12px;">
+                    🤖 Option C — AI Chatbot
+                  </button>
+                </div>
+              </div>
+
+              <!-- 2. Dynamic Banner & Human Takeover / Return to AI Buttons -->
+              <div id="handling-action-banner" style="display: flex; justify-content: space-between; align-items: center; border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; font-size: 12px; background: rgba(49, 130, 206, 0.15); border: 1px solid rgba(49, 130, 206, 0.3);">
+                <div id="handling-banner-text" style="display: flex; align-items: center; gap: 8px;">
+                  <span>🤖 <strong>AI Chatbot is handling this conversation.</strong></span>
+                </div>
+                <div id="handling-banner-actions">
+                  <button type="button" id="btn-takeover-from-ai" class="btn-primary" style="padding: 5px 12px; font-size: 11px; background: #e53e3e;">
+                    ⚡ Take Over from AI
+                  </button>
+                  <button type="button" id="btn-return-to-ai" class="btn-primary" style="display: none; padding: 5px 12px; font-size: 11px; background: #3182ce;">
+                    🤖 Return to AI
+                  </button>
+                </div>
+              </div>
+
+              <!-- 3. Assignment History Collapsible -->
+              <div style="margin-bottom: 8px;">
+                <button type="button" class="btn-secondary" id="btn-toggle-assignment-history" style="font-size: 11px; padding: 3px 8px; background: transparent; border: 1px dashed rgba(255,255,255,0.2);">
+                  📜 View Assignment History (<span id="conv-history-count">0</span>) ▾
+                </button>
+                <div id="conv-history-drawer" style="display: none; margin-top: 6px; max-height: 160px; overflow-y: auto; background: rgba(0,0,0,0.25); border-radius: 6px; padding: 8px; font-size: 11px;">
+                  <div id="conv-history-entries">No history yet.</div>
+                </div>
+              </div>
+            </div>
+
             <div id="conv-messages-box" class="messages-thread">No conversation selected.</div>
             <form id="form-send-reply" class="stack-form" style="margin-top:10px;">
               <div class="row-actions">
@@ -240,7 +313,7 @@
               </div>
               <div class="row-actions">
                 <input type="text" id="reply-body" class="input-modern" placeholder="Type WhatsApp message or customer query..." />
-                <button type="submit" class="btn-primary">Send via Meta API</button>
+                <button type="submit" class="btn-primary">Send via WhatsApp</button>
                 <button type="button" class="btn-secondary" id="btn-test-ai-reply">Draft/Send AI Reply</button>
               </div>
             </form>
@@ -435,22 +508,133 @@
       <section class="view-panel" id="view-ai-support">
         <div class="dash-card">
           <div class="card-title">
-            <h3>AI Customer Support Bot (Cloudflare Workers AI)</h3>
-            <span class="badge-tag" id="workers-ai-badge">Checking binding...</span>
-          </div>
-          <form id="form-ai-config" class="stack-form">
-            <label class="row-actions">
-              <input type="checkbox" id="ai-enabled" />
-              <span>Enable AI Customer Support Replies for Inbound WhatsApp Messages</span>
-            </label>
-            <input type="text" id="ai-name" class="input-modern" placeholder="Agent Name" />
-            <input type="text" id="ai-model" class="input-modern" placeholder="Model ID (@cf/meta/llama-3.1-8b-instruct-fast)" />
-            <textarea id="ai-system-prompt" class="input-modern" rows="4" placeholder="Organization instructions (English & Urdu grounded policy)..."></textarea>
-            <div class="row-actions">
-              <label class="field-inline"><span>Daily AI Replies Cap</span><input type="number" id="ai-daily-limit" class="input-modern" min="1" max="10000" /></label>
-              <label class="field-inline grow"><span>Handoff Keywords (comma-separated)</span><input type="text" id="ai-handoff-keywords" class="input-modern" /></label>
+            <div>
+              <h3 style="margin: 0;">Google Gemini AI Chatbot & Business Profile</h3>
+              <div class="muted-note" style="font-size: 12px; margin-top: 4px;">
+                Configure intelligent WhatsApp auto-replies powered by Google Gemini and your organization's business profile.
+              </div>
             </div>
-            <button type="submit" class="btn-primary">Save AI Agent Settings</button>
+            <div class="row-actions">
+              <span class="badge-tag" id="gemini-ai-badge">Checking Gemini...</span>
+              <span class="badge-tag" id="workers-ai-badge">Checking Workers AI...</span>
+            </div>
+          </div>
+
+          <form id="form-ai-config" class="stack-form">
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 14px; margin-bottom: 12px;">
+              <h4 style="margin: 0 0 10px 0; color: #63b3ed; font-size: 14px;">1. AI Engine & Assistant Controls</h4>
+              <label class="row-actions" style="margin-bottom: 10px;">
+                <input type="checkbox" id="ai-enabled" />
+                <span style="font-weight: 600;">Enable AI Chatbot Automatic Replies for WhatsApp</span>
+              </label>
+              <div class="row-actions" style="margin-bottom: 10px;">
+                <label class="field-inline grow">
+                  <span>Assistant Name</span>
+                  <input type="text" id="ai-name" class="input-modern" placeholder="e.g. Booster AI Assistant" />
+                </label>
+                <label class="field-inline grow">
+                  <span>AI Model</span>
+                  <select id="ai-model-select" class="input-modern">
+                    <option value="gemini-1.5-flash">Google Gemini 1.5 Flash (Recommended - Fast & Natural)</option>
+                    <option value="gemini-2.0-flash">Google Gemini 2.0 Flash (Next-Gen)</option>
+                    <option value="gemini-1.5-pro">Google Gemini 1.5 Pro (Deep Business Reasoning)</option>
+                    <option value="@cf/meta/llama-3.1-8b-instruct-fast">Meta Llama 3.1 8B (Cloudflare Workers AI)</option>
+                  </select>
+                </label>
+              </div>
+              <div class="row-actions" style="margin-bottom: 10px;">
+                <label class="field-inline">
+                  <span>Daily AI Reply Limit</span>
+                  <input type="number" id="ai-daily-limit" class="input-modern" min="1" max="10000" />
+                </label>
+                <label class="field-inline grow">
+                  <span>Handoff Keywords (comma-separated, e.g. agent, human, support)</span>
+                  <input type="text" id="ai-handoff-keywords" class="input-modern" />
+                </label>
+              </div>
+              <label class="stack-form">
+                <span>Core System Persona / Prompt</span>
+                <textarea id="ai-system-prompt" class="input-modern" rows="3" placeholder="You are a polite, helpful customer service assistant for our business..."></textarea>
+              </label>
+            </div>
+
+            <!-- SECTION 2: BUSINESS KNOWLEDGE & PROFILE SETTINGS -->
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 14px; margin-bottom: 12px;">
+              <h4 style="margin: 0 0 10px 0; color: #48bb78; font-size: 14px;">2. Organization Business Profile & Knowledge</h4>
+              <div class="row-actions" style="margin-bottom: 10px;">
+                <label class="field-inline grow">
+                  <span>Business Name</span>
+                  <input type="text" id="ai-biz-name" class="input-modern" placeholder="e.g. WhatsApp Booster Pro" />
+                </label>
+                <label class="field-inline grow">
+                  <span>Preferred Response Language</span>
+                  <input type="text" id="ai-biz-language" class="input-modern" placeholder="e.g. English, Urdu, or Auto-detect" />
+                </label>
+                <label class="field-inline grow">
+                  <span>Conversation Tone</span>
+                  <select id="ai-biz-tone" class="input-modern">
+                    <option value="friendly and welcoming">Friendly & Welcoming</option>
+                    <option value="professional and polished">Professional & Polished</option>
+                    <option value="formal and authoritative">Formal & Authoritative</option>
+                    <option value="casual and concise">Casual & Concise</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="row-actions" style="margin-bottom: 10px;">
+                <label class="stack-form grow">
+                  <span>Business Description</span>
+                  <textarea id="ai-biz-desc" class="input-modern" rows="2" placeholder="Brief summary of what your business does and who you serve..."></textarea>
+                </label>
+              </div>
+
+              <div class="grid-two" style="margin-bottom: 10px;">
+                <label class="stack-form">
+                  <span>Products & Services</span>
+                  <textarea id="ai-biz-products" class="input-modern" rows="3" placeholder="List all products, services, features, and offerings..."></textarea>
+                </label>
+                <label class="stack-form">
+                  <span>Prices & Packages</span>
+                  <textarea id="ai-biz-pricing" class="input-modern" rows="3" placeholder="Exact pricing, discounts, subscription tiers, and payment methods..."></textarea>
+                </label>
+              </div>
+
+              <div class="grid-two" style="margin-bottom: 10px;">
+                <label class="stack-form">
+                  <span>Business Opening Hours</span>
+                  <input type="text" id="ai-biz-hours" class="input-modern" placeholder="e.g. Mon-Fri 9:00 AM - 6:00 PM (PKT)" />
+                </label>
+                <label class="stack-form">
+                  <span>Business Location / Address</span>
+                  <input type="text" id="ai-biz-location" class="input-modern" placeholder="e.g. Office 402, Business Tower, Lahore, Pakistan" />
+                </label>
+              </div>
+
+              <div class="row-actions" style="margin-bottom: 10px;">
+                <label class="field-inline grow">
+                  <span>Contact Info (Phone, Email, Website)</span>
+                  <input type="text" id="ai-biz-contact" class="input-modern" placeholder="e.g. support@example.com, +92-300-1234567, https://example.com" />
+                </label>
+              </div>
+
+              <label class="stack-form" style="margin-bottom: 10px;">
+                <span>Frequently Asked Questions (FAQs)</span>
+                <textarea id="ai-biz-faqs" class="input-modern" rows="4" placeholder="Q: What is delivery time? A: 2-3 business days.&#10;Q: What is the return policy? A: 7-day money back guarantee..."></textarea>
+              </label>
+
+              <div class="grid-two" style="margin-bottom: 10px;">
+                <label class="stack-form">
+                  <span>Customer Service Instructions</span>
+                  <textarea id="ai-biz-service-instructions" class="input-modern" rows="3" placeholder="e.g. Always greet warmly, verify order number, escalate refunds immediately..."></textarea>
+                </label>
+                <label class="stack-form">
+                  <span>Custom Chatbot Instructions</span>
+                  <textarea id="ai-biz-custom-instructions" class="input-modern" rows="3" placeholder="e.g. Do not discuss competitors, keep replies under 3 sentences unless asked..."></textarea>
+                </label>
+              </div>
+            </div>
+
+            <button type="submit" class="btn-primary" style="padding: 10px 20px; font-weight: 600;">Save AI Chatbot & Business Profile</button>
           </form>
         </div>
       </section>
