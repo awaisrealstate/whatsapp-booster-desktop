@@ -58,7 +58,7 @@ export async function recordHistorySyncBatch(
   const accountId = params.whatsappAccountId;
 
   // 1. Maintain or create active sync job
-  let jobId = crypto.randomUUID();
+  let jobId: string = crypto.randomUUID();
   const existingJob = await db
     .select()
     .from(messageSyncJobs)

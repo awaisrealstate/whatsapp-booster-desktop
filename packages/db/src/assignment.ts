@@ -390,7 +390,12 @@ export async function listFilteredConversations(
   } else if (params.filter === 'groups') {
     conditions.push(eq(conversations.isGroup, 1));
   } else if (params.filter === 'archived') {
-    conditions.push(eq(conversations.status, 'archived'));
+    conditions.push(
+      or(
+        eq(conversations.status, 'resolved'),
+        eq(conversations.syncStatus, 'archived')
+      )!
+    );
   }
 
   const rows = await db

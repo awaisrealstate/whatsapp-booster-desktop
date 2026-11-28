@@ -74,7 +74,7 @@ export type MessageDirection = (typeof MESSAGE_DIRECTIONS)[number];
 export const MESSAGE_SENDER_KINDS = ['contact', 'agent', 'system'] as const;
 export type MessageSenderKind = (typeof MESSAGE_SENDER_KINDS)[number];
 
-export const MESSAGE_TYPES = ['text', 'template', 'image', 'document', 'audio'] as const;
+export const MESSAGE_TYPES = ['text', 'template', 'image', 'document', 'audio', 'video'] as const;
 export type MessageType = (typeof MESSAGE_TYPES)[number];
 
 export const MESSAGE_STATUSES = ['pending', 'queued', 'sent', 'delivered', 'read', 'failed'] as const;

@@ -241,7 +241,9 @@ export function createQrServiceServer(options: QrServerOptions) {
       if (method === 'GET' && reqUrl.pathname.startsWith('/media/')) {
         const parts = reqUrl.pathname.slice('/media/'.length).split('/');
         if (parts.length === 3) {
-          const [orgId, accountId, filename] = parts;
+          const orgId = parts[0]!;
+          const accountId = parts[1]!;
+          const filename = parts[2]!;
           if (/^[a-zA-Z0-9_-]+$/.test(orgId) && /^[a-zA-Z0-9_-]+$/.test(accountId) && /^[a-zA-Z0-9_.-]+$/.test(filename)) {
             const filePath = path.resolve(mediaDir, orgId, accountId, filename);
             if (filePath.startsWith(mediaDir) && fsSync.existsSync(filePath)) {

@@ -160,7 +160,7 @@ async function downloadAndSaveMedia(
     else if (details.type === 'audio') ext = 'ogg';
     else if (details.type === 'document') {
       const match = details.filename?.match(/\.([a-zA-Z0-9]+)$/);
-      ext = match ? match[1].toLowerCase() : 'pdf';
+      ext = match && match[1] ? match[1].toLowerCase() : 'pdf';
     }
 
     const filename = `${msgId}.${ext}`;
@@ -507,20 +507,24 @@ export class QrSessionManager {
           'Received Baileys messaging-history.set event'
         );
 
-        const mappedChats = (chats ?? []).map((c) => ({
-          id: c.id,
-          name: c.name || (c as { subject?: string }).subject || null,
-          unreadCount: c.unreadCount ?? 0,
-          lastMessageTimestamp: typeof c.conversationTimestamp === 'number' ? c.conversationTimestamp : null,
-          isGroup: Boolean(c.id?.endsWith('@g.us'))
-        }));
+        const mappedChats = (chats ?? [])
+          .filter((c) => Boolean(c.id))
+          .map((c) => ({
+            id: c.id!,
+            name: c.name || (c as { subject?: string }).subject || null,
+            unreadCount: c.unreadCount ?? 0,
+            lastMessageTimestamp: typeof c.conversationTimestamp === 'number' ? c.conversationTimestamp : null,
+            isGroup: Boolean(c.id?.endsWith('@g.us'))
+          }));
 
-        const mappedContacts = (contacts ?? []).map((c) => ({
-          id: c.id,
-          name: c.name || null,
-          notify: c.notify || null,
-          verifiedName: c.verifiedName || null
-        }));
+        const mappedContacts = (contacts ?? [])
+          .filter((c) => Boolean(c.id))
+          .map((c) => ({
+            id: c.id!,
+            name: c.name || null,
+            notify: c.notify || null,
+            verifiedName: c.verifiedName || null
+          }));
 
         const BATCH_SIZE = 50;
         const rawMessages = messages ?? [];
@@ -596,13 +600,15 @@ export class QrSessionManager {
     // ── Incremental Chat Updates ───────────────────────────────────────────
     sock.ev.on('chats.upsert', async (newChats) => {
       try {
-        const mapped = (newChats ?? []).map((c) => ({
-          id: c.id,
-          name: c.name || null,
-          unreadCount: c.unreadCount ?? 0,
-          lastMessageTimestamp: typeof c.conversationTimestamp === 'number' ? c.conversationTimestamp : null,
-          isGroup: Boolean(c.id?.endsWith('@g.us'))
-        }));
+        const mapped = (newChats ?? [])
+          .filter((c) => Boolean(c.id))
+          .map((c) => ({
+            id: c.id!,
+            name: c.name || null,
+            unreadCount: c.unreadCount ?? 0,
+            lastMessageTimestamp: typeof c.conversationTimestamp === 'number' ? c.conversationTimestamp : null,
+            isGroup: Boolean(c.id?.endsWith('@g.us'))
+          }));
         if (mapped.length > 0) {
           await this.postSignedWebhook({
             eventType: 'history_sync',
