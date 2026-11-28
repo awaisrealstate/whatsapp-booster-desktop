@@ -57,10 +57,13 @@ export function createQrServiceServer(options: QrServerOptions) {
     encryptionKey: options.encryptionKey
   });
 
+  const mediaDir = path.join(options.storageDir, 'media');
+
   const manager = new QrSessionManager({
     store,
     bridgeSecret,
     webhookUrl: options.webhookUrl,
+    mediaDir,
     qrTtlMs: options.qrTtlMs,
     socketFactory: options.socketFactory,
     fetchFn: options.fetchFn
@@ -232,6 +235,47 @@ export function createQrServiceServer(options: QrServerOptions) {
   const server = http.createServer(async (req, res) => {
     try {
       const method = (req.method || 'GET').toUpperCase();
+      const reqUrl = new URL(req.url || '/', 'http://127.0.0.1');
+
+      // Serve downloaded WhatsApp media files securely
+      if (method === 'GET' && reqUrl.pathname.startsWith('/media/')) {
+        const parts = reqUrl.pathname.slice('/media/'.length).split('/');
+        if (parts.length === 3) {
+          const [orgId, accountId, filename] = parts;
+          if (/^[a-zA-Z0-9_-]+$/.test(orgId) && /^[a-zA-Z0-9_-]+$/.test(accountId) && /^[a-zA-Z0-9_.-]+$/.test(filename)) {
+            const filePath = path.resolve(mediaDir, orgId, accountId, filename);
+            if (filePath.startsWith(mediaDir) && fsSync.existsSync(filePath)) {
+              const ext = path.extname(filename).toLowerCase();
+              const mimeMap: Record<string, string> = {
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.png': 'image/png',
+                '.webp': 'image/webp',
+                '.gif': 'image/gif',
+                '.mp4': 'video/mp4',
+                '.ogg': 'audio/ogg',
+                '.opus': 'audio/ogg',
+                '.mp3': 'audio/mpeg',
+                '.pdf': 'application/pdf',
+                '.txt': 'text/plain'
+              };
+              const mime = mimeMap[ext] || 'application/octet-stream';
+              const stat = fsSync.statSync(filePath);
+              res.writeHead(200, {
+                'Content-Type': mime,
+                'Content-Length': stat.size,
+                'Cache-Control': 'public, max-age=86400',
+                'X-Content-Type-Options': 'nosniff'
+              });
+              fsSync.createReadStream(filePath).pipe(res);
+              return;
+            }
+          }
+        }
+        sendJson(res, 404, { error: { code: 'MEDIA_NOT_FOUND', message: 'Media file not found.' } });
+        return;
+      }
+
       const rawBody = method === 'GET' ? '' : await readRawBody(req);
       const out = await handleRequest({
         method,

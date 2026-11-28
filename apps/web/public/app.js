@@ -169,6 +169,35 @@ function getEffectiveApiBase() {
   return (state.apiBase || 'http://127.0.0.1:8787').replace(/\/+$/, '');
 }
 
+function getEffectiveMediaUrl(url) {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  if (url.startsWith('/media/')) {
+    const apiBase = getEffectiveApiBase();
+    if (apiBase.includes('127.0.0.1') || apiBase.includes('localhost')) {
+      return `http://127.0.0.1:8790${url}`;
+    }
+  }
+  return url;
+}
+
+function formatRelativeTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const now = new Date();
+  if (isNaN(d.getTime())) return '';
+  const isSameDay = d.toDateString() === now.toDateString();
+  if (isSameDay) {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  const yesterday = new Date();
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) {
+    return 'Yesterday';
+  }
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
 async function apiFetch(path, options = {}) {
   const base = getEffectiveApiBase();
   const headers = { ...(options.headers || {}) };
@@ -178,10 +207,24 @@ async function apiFetch(path, options = {}) {
   if (options.body && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
-  const res = await fetch(`${base}${path}`, { ...options, headers });
+  let res;
+  try {
+    res = await fetch(`${base}${path}`, { ...options, headers });
+  } catch (netErr) {
+    if (typeof window !== 'undefined' && window.location.protocol === 'https:' && base.startsWith('http://')) {
+      throw new Error(`Browser blocked insecure request to "${base}" (Mixed Content). Please switch the API dropdown at the top to "Cloudflare Live API", or run your dashboard on http://127.0.0.1:8788.`);
+    }
+    throw new Error(`Unable to connect to API at ${base} (${netErr?.message || 'NetworkError'}). Is the backend server running?`);
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data?.error?.message || `Request failed (${res.status})`);
+    const errorMsg =
+      (typeof data?.error === 'object' && data.error !== null
+        ? data.error.message || data.error.code
+        : data?.error) ||
+      (typeof data?.message === 'string' ? data.message : null) ||
+      `Request failed (${res.status}: ${res.statusText})`;
+    throw new Error(errorMsg);
   }
   return data;
 }
@@ -620,23 +663,40 @@ function renderConversations() {
 
   document.getElementById('conversations-list').innerHTML = state.conversations.length
     ? state.conversations
-        .map(
-          (conv) => `
-        <div class="item-row ${conv.id === state.activeConversationId ? 'selected' : ''}" data-action="select-conv" data-id="${escapeHtml(conv.id)}" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding: 10px 12px; margin-bottom: 6px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06);">
-          <div style="flex:1; min-width: 0; padding-right: 8px;">
-            <div style="display:flex; align-items:center; gap:6px;">
-              <strong>${escapeHtml(conv.contactName || 'Unknown')}</strong>
-              <span class="muted-note" style="font-size:11px;">(${escapeHtml(conv.contactPhone || '')})</span>
+        .map((conv) => {
+          const isSelected = conv.id === state.activeConversationId;
+          const isGroup = Boolean(conv.isGroup);
+          const displayName = isGroup
+            ? conv.groupSubject || conv.contactName || 'WhatsApp Group'
+            : conv.contactName || 'Unknown Contact';
+          const displayPhone = conv.contactPhone ? `(${conv.contactPhone})` : (isGroup ? '[Group]' : '');
+          const timeText = conv.lastMessageAt ? formatRelativeTime(conv.lastMessageAt) : '';
+          const avatar = isGroup ? '👥' : (displayName.trim().slice(0, 1).toUpperCase() || '👤');
+
+          return `
+        <div class="item-row ${isSelected ? 'selected' : ''}" data-action="select-conv" data-id="${escapeHtml(conv.id)}" style="cursor:pointer; display:flex; gap:10px; align-items:center; padding: 10px 12px; margin-bottom: 6px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); background:${isSelected ? 'rgba(0,168,132,0.1)' : 'transparent'};">
+          <div class="conv-avatar">${escapeHtml(avatar)}</div>
+          <div style="flex:1; min-width: 0;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div style="display:flex; align-items:center; gap:6px; min-width:0;">
+                <strong style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(displayName)}</strong>
+                ${isGroup ? '<span class="badge-tag" style="font-size:9px; padding:1px 4px;">Group</span>' : ''}
+                <span class="muted-note" style="font-size:11px; white-space:nowrap;">${escapeHtml(displayPhone)}</span>
+              </div>
+              <span class="muted-note" style="font-size:10px; white-space:nowrap; margin-left:4px;">${escapeHtml(timeText)}</span>
             </div>
-            <div class="muted-note" style="font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px;">
-              ${escapeHtml(conv.lastMessagePreview || 'No messages yet')}
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:3px;">
+              <div class="muted-note" style="font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; padding-right:6px;">
+                ${escapeHtml(conv.lastMessagePreview || 'No messages yet')}
+              </div>
+              <div style="display:flex; align-items:center; gap:4px; flex-shrink:0;">
+                ${conv.unreadCount > 0 ? `<span class="badge-unread">${Number(conv.unreadCount)}</span>` : ''}
+                ${formatConversationStatusBadge(conv)}
+              </div>
             </div>
           </div>
-          <div>
-            ${formatConversationStatusBadge(conv)}
-          </div>
-        </div>`
-        )
+        </div>`;
+        })
         .join('')
     : '<div class="muted-note">No conversations found.</div>';
 }
@@ -886,17 +946,92 @@ async function loadConversationMessages(convId) {
 
     const box = document.getElementById('conv-messages-box');
     const msgs = msgData.items || [];
-    box.innerHTML = msgs.length
-      ? msgs
-          .map(
-            (m) => `
-          <div class="msg-bubble ${m.direction === 'outbound' ? 'outbound' : 'inbound'}">
-            <div>${escapeHtml(m.body || '')}</div>
-            <div class="msg-meta">${escapeHtml(m.direction)} · ${escapeHtml(m.status)} · ${new Date(m.createdAt).toLocaleString()}</div>
-          </div>`
-          )
-          .join('')
-      : '<div class="muted-note">No messages yet.</div>';
+    if (!msgs.length) {
+      box.innerHTML = '<div class="muted-note">No messages in this conversation yet.</div>';
+    } else {
+      let html = '';
+      let lastDateStr = '';
+      for (const m of msgs) {
+        const msgDate = m.createdAt ? new Date(m.createdAt).toDateString() : '';
+        if (msgDate && msgDate !== lastDateStr) {
+          const now = new Date();
+          const isToday = msgDate === now.toDateString();
+          const yesterday = new Date();
+          yesterday.setDate(now.getDate() - 1);
+          const isYesterday = msgDate === yesterday.toDateString();
+          const label = isToday
+            ? 'Today'
+            : isYesterday
+              ? 'Yesterday'
+              : new Date(m.createdAt).toLocaleDateString([], {
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric'
+                });
+          html += `<div class="date-separator"><span>${label}</span></div>`;
+          lastDateStr = msgDate;
+        }
+
+        const isOut = m.direction === 'outbound';
+        const isDeleted = Boolean(m.isDeletedOnWhatsapp);
+        const isEdited = Boolean(m.isEdited);
+        const timeStr = m.createdAt
+          ? new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          : '';
+
+        let statusTick = '';
+        if (isOut) {
+          if (m.status === 'read') statusTick = '<span style="color:#53bdeb; font-weight:bold;">✓✓</span>';
+          else if (m.status === 'delivered') statusTick = '<span style="color:#8696a0;">✓✓</span>';
+          else if (m.status === 'sent') statusTick = '<span style="color:#8696a0;">✓</span>';
+          else if (m.status === 'pending') statusTick = '<span style="color:#8696a0;">🕒</span>';
+          else if (m.status === 'failed') statusTick = '<span style="color:#e53e3e;">⚠️</span>';
+        }
+
+        let mediaHtml = '';
+        if (m.mediaUrl) {
+          const effectiveUrl = getEffectiveMediaUrl(m.mediaUrl);
+          const mime = m.mediaMimeType || '';
+          if (m.msgType === 'image' || mime.startsWith('image/')) {
+            mediaHtml = `<a href="${effectiveUrl}" target="_blank" rel="noopener"><img src="${effectiveUrl}" class="msg-media-img" alt="Media" loading="lazy" /></a>`;
+          } else if (m.msgType === 'video' || mime.startsWith('video/')) {
+            mediaHtml = `<video controls src="${effectiveUrl}" class="msg-media-video"></video>`;
+          } else if (m.msgType === 'audio' || mime.startsWith('audio/')) {
+            mediaHtml = `<audio controls src="${effectiveUrl}" class="msg-media-audio"></audio>`;
+          } else {
+            mediaHtml = `<a href="${effectiveUrl}" download="${escapeHtml(m.mediaFilename || 'file')}" class="msg-doc-download">📄 ${escapeHtml(m.mediaFilename || 'Download Document')}</a>`;
+          }
+        }
+
+        const deletedBanner = isDeleted
+          ? `<div class="badge-deleted-wa">⚠️ Deleted on WhatsApp — Archived in CRM</div>`
+          : '';
+
+        const editedBadge = isEdited
+          ? `<button type="button" class="badge-edited-wa" data-action="view-versions" data-id="${escapeHtml(m.id)}" data-conv-id="${escapeHtml(convId)}">✏️ (Edited)</button>`
+          : '';
+
+        const senderNote = m.senderName
+          ? `<div style="font-size:10px; color:#00a884; font-weight:600; margin-bottom:2px;">${escapeHtml(m.senderName)}</div>`
+          : '';
+
+        html += `
+          <div class="msg-bubble ${isOut ? 'outbound' : 'inbound'} ${isDeleted ? 'deleted-wa' : ''}">
+            ${deletedBanner}
+            ${senderNote}
+            ${mediaHtml}
+            ${m.body ? `<div style="word-break:break-word;">${escapeHtml(m.body)}</div>` : ''}
+            <div class="msg-meta">
+              ${editedBadge}
+              <span>${escapeHtml(timeStr)}</span>
+              ${statusTick}
+            </div>
+          </div>`;
+      }
+      box.innerHTML = html;
+      box.scrollTop = box.scrollHeight;
+    }
   } catch (err) {
     showBanner(`Failed to load conversation: ${err.message}`, true);
   }
@@ -999,7 +1134,8 @@ async function refreshAllData() {
       apiFetch('/api/v1/messages/scheduled').catch(() => ({ items: [] })),
       apiFetch('/api/v1/whatsapp/status').catch(() => ({ items: [] })),
       apiFetch('/api/v1/analytics/overview').catch(() => ({ overview: null })),
-      apiFetch('/api/v1/business-ai/recommendations').catch(() => ({ items: [] }))
+      apiFetch('/api/v1/business-ai/recommendations').catch(() => ({ items: [] })),
+      apiFetch('/api/v1/crm/sync/status').catch(() => ({ syncJob: null }))
     ]);
 
     state.accounts = acc.items || [];
@@ -1023,6 +1159,23 @@ async function refreshAllData() {
     state.waStatuses = statuses.items || [];
     state.businessAnalytics = analytics.overview || null;
     state.aiRecommendations = recs.items || [];
+
+    // Render Sync Progress Banner
+    const syncJob = syncRes?.syncJob;
+    const syncBanner = document.getElementById('sync-progress-banner');
+    const syncText = document.getElementById('sync-progress-text');
+    if (syncBanner && syncText) {
+      if (syncJob && (syncJob.status === 'in_progress' || syncJob.messagesSynced > 0)) {
+        syncBanner.style.display = 'block';
+        if (syncJob.status === 'in_progress') {
+          syncText.textContent = `Importing history (${syncJob.chatsSynced} chats, ${syncJob.messagesSynced} messages, ${syncJob.contactsSynced} contacts)...`;
+        } else {
+          syncText.textContent = `Permanent CRM Archive active: ${syncJob.chatsSynced} chats, ${syncJob.messagesSynced} messages imported from WhatsApp.`;
+        }
+      } else {
+        syncBanner.style.display = 'none';
+      }
+    }
 
     renderAllViews();
     showBanner('');
@@ -1107,7 +1260,11 @@ function wireEvents() {
       state.apiBase = val;
       if (typeof localStorage !== 'undefined') localStorage.setItem('wacrm_api_base', val);
       if (inApi) inApi.value = val;
-      showBanner(`API environment switched to ${val}.`);
+      if (typeof window !== 'undefined' && window.location.protocol === 'https:' && val.startsWith('http://127.0.0.1')) {
+        showBanner(`⚠️ API environment switched to ${val}. Notice: You are viewing an HTTPS site; browsers block requests to HTTP 127.0.0.1. Switch to "Cloudflare Live API" or open http://127.0.0.1:8788.`, true);
+      } else {
+        showBanner(`API environment switched to ${val}.`);
+      }
       if (state.token) {
         await refreshAllData();
       }
@@ -1184,15 +1341,24 @@ function wireEvents() {
     }
   });
 
-  document.getElementById('btn-dev-login')?.addEventListener('click', async () => {
+  const btnDevLogin = document.getElementById('btn-dev-login');
+  btnDevLogin?.addEventListener('click', async () => {
+    const origText = btnDevLogin.textContent;
     try {
+      btnDevLogin.disabled = true;
+      btnDevLogin.textContent = 'Signing in...';
       state.apiBase = getEffectiveApiBase();
+
+      if (typeof window !== 'undefined' && window.location.protocol === 'https:' && state.apiBase.startsWith('http://127.0.0.1')) {
+        return showBanner('⚠️ Browser Mixed Content Block: You are viewing this site over HTTPS. Browsers block HTTP calls to 127.0.0.1. Please switch the API dropdown at the top to "Cloudflare Live API", or run your dashboard locally on http://127.0.0.1:8788.', true);
+      }
+
       const email = document.getElementById('login-email')?.value?.trim() || '';
       const password = document.getElementById('login-password')?.value || '';
       if (!email || !password) {
         return showBanner('Please enter your email and password.', true);
       }
-      showBanner('Signing in...');
+      showBanner(`Signing in to ${state.apiBase}...`);
       const res = await apiFetch('/api/v1/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password, clientType: 'web' })
@@ -1205,21 +1371,33 @@ function wireEvents() {
         localStorage.setItem('wacrm_bearer_token', res.token);
       }
       await refreshAllData();
-      showBanner('Signed in successfully.');
+      showBanner('✓ Signed in successfully.');
     } catch (err) {
-      showBanner(err.message, true);
+      showBanner(`Sign in failed: ${err.message}`, true);
+    } finally {
+      btnDevLogin.disabled = false;
+      btnDevLogin.textContent = origText;
     }
   });
 
-  document.getElementById('btn-dev-register')?.addEventListener('click', async () => {
+  const btnDevRegister = document.getElementById('btn-dev-register');
+  btnDevRegister?.addEventListener('click', async () => {
+    const origText = btnDevRegister.textContent;
     try {
+      btnDevRegister.disabled = true;
+      btnDevRegister.textContent = 'Creating account...';
       state.apiBase = getEffectiveApiBase();
+
+      if (typeof window !== 'undefined' && window.location.protocol === 'https:' && state.apiBase.startsWith('http://127.0.0.1')) {
+        return showBanner('⚠️ Browser Mixed Content Block: You are viewing this site over HTTPS. Browsers block HTTP calls to 127.0.0.1. Please switch the API dropdown at the top to "Cloudflare Live API", or run your dashboard locally on http://127.0.0.1:8788.', true);
+      }
+
       const email = document.getElementById('login-email')?.value?.trim() || '';
       const password = document.getElementById('login-password')?.value || '';
       if (!email || password.length < 8) {
         return showBanner('Enter a valid email and password (at least 8 characters) to create an account.', true);
       }
-      showBanner('Creating account...');
+      showBanner(`Creating account on ${state.apiBase}...`);
       const res = await apiFetch('/api/v1/auth/register', {
         method: 'POST',
         body: JSON.stringify({
@@ -1237,9 +1415,12 @@ function wireEvents() {
         localStorage.setItem('wacrm_bearer_token', res.token);
       }
       await refreshAllData();
-      showBanner('Account created and signed in successfully!');
+      showBanner('✓ Account created and signed in successfully!');
     } catch (err) {
-      showBanner(err.message, true);
+      showBanner(`Registration failed: ${err.message}`, true);
+    } finally {
+      btnDevRegister.disabled = false;
+      btnDevRegister.textContent = origText;
     }
   });
 
@@ -2019,13 +2200,77 @@ function wireEvents() {
     }
   });
 
+  // Conversation Audit Timeline Toggle
+  document.getElementById('btn-toggle-timeline')?.addEventListener('click', async () => {
+    const drawer = document.getElementById('conv-audit-timeline-drawer');
+    if (!drawer) return;
+    if (drawer.style.display === 'block') {
+      drawer.style.display = 'none';
+      return;
+    }
+    drawer.style.display = 'block';
+    if (!state.activeConversationId) return;
+    try {
+      const res = await apiFetch(`/api/v1/crm/conversations/${encodeURIComponent(state.activeConversationId)}/audit`);
+      const timeline = res.timeline || [];
+      const entriesEl = document.getElementById('conv-audit-entries');
+      if (entriesEl) {
+        entriesEl.innerHTML = timeline.length
+          ? timeline
+              .map(
+                (item) => `
+              <div style="padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06);">
+                <span class="badge-tag" style="font-size:10px;">${escapeHtml(item.action)}</span>
+                <span class="muted-note" style="margin-left:6px;">${new Date(item.createdAt).toLocaleString()}</span>
+                ${item.metadataJson ? `<div style="font-size:11px; color:#cbd5e0; margin-top:2px;">${escapeHtml(item.metadataJson)}</div>` : ''}
+              </div>`
+              )
+              .join('')
+          : '<div class="muted-note">No audit records for this conversation yet.</div>';
+      }
+    } catch (err) {
+      showBanner(`Failed to load audit timeline: ${err.message}`, true);
+    }
+  });
+
+  // Close message edit versions modal
+  document.getElementById('btn-close-versions-modal')?.addEventListener('click', () => {
+    const modal = document.getElementById('versions-modal');
+    if (modal) modal.style.display = 'none';
+  });
+
   document.body.addEventListener('click', async (e) => {
     const target = e.target.closest('[data-action]');
     if (!target) return;
     const action = target.dataset.action;
     const id = target.dataset.id;
     try {
-      if (action === 'sync-templates') { await apiFetch(`/api/v1/whatsapp/accounts/${encodeURIComponent(id)}/sync-templates`, { method: 'POST' }); await refreshAllData(); }
+      if (action === 'view-versions') {
+        const messageId = target.dataset.id;
+        const convId = target.dataset.convId || state.activeConversationId;
+        if (!messageId || !convId) return;
+        const res = await apiFetch(`/api/v1/crm/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}/versions`);
+        const versions = res.versions || [];
+        const contentEl = document.getElementById('versions-modal-content');
+        if (contentEl) {
+          contentEl.innerHTML = versions.length
+            ? versions
+                .map(
+                  (v) => `
+                <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:6px; margin-bottom:8px; border-left:3px solid #63b3ed;">
+                  <div style="font-size:11px; color:#a0aec0; margin-bottom:4px;">
+                    <strong>Version #${v.versionNumber}</strong> · Previous copy before edit (${new Date(v.editedAt).toLocaleString()})
+                  </div>
+                  <div style="white-space:pre-wrap; word-break:break-word;">${escapeHtml(v.body || '')}</div>
+                </div>`
+                )
+                .join('')
+            : '<div class="muted-note">No previous versions found for this message.</div>';
+        }
+        const modal = document.getElementById('versions-modal');
+        if (modal) modal.style.display = 'flex';
+      }
+      else if (action === 'sync-templates') { await apiFetch(`/api/v1/whatsapp/accounts/${encodeURIComponent(id)}/sync-templates`, { method: 'POST' }); await refreshAllData(); }
       else if (action === 'verify-meta') { const r = await apiFetch(`/api/v1/whatsapp/accounts/${encodeURIComponent(id)}/verify`, { method: 'POST' }); await refreshAllData(); showBanner(`Meta Account verified (${r.phoneNumber || 'OK'})`); }
       else if (action === 'manage-qr') { state.activeQrAccountId = id; state.qrSession = (await apiFetch(`/api/v1/whatsapp/accounts/qr/${encodeURIComponent(id)}/status`)).session; renderAccounts(); }
       else if (action === 'qr-reconnect') { state.activeQrAccountId = id; const r = await apiFetch(`/api/v1/whatsapp/accounts/qr/${encodeURIComponent(id)}/reconnect`, { method: 'POST' }); state.qrSession = r.session; await refreshAllData(); }

@@ -13,6 +13,9 @@ import {
   findMetaAccountByVerifyToken,
   handleAiSupportForConversation,
   recordAndProcessMetaWebhookEvents,
+  recordHistorySyncBatch,
+  recordMessageEdit,
+  recordMessageRevocation,
   recordQrBridgeInboundMessage,
   TenantAccessError,
   updateQrSessionState
@@ -248,6 +251,21 @@ export function createWebhookRoutes(metaProvider?: WhatsAppProvider, customQrBri
         }
       }
       return c.json({ ok: true, eventType: 'inbound_message', ...res }, 200);
+    }
+
+    if (payload.eventType === 'history_sync') {
+      const res = await recordHistorySyncBatch(db, payload);
+      return c.json({ ok: true, eventType: 'history_sync', ...res }, 200);
+    }
+
+    if (payload.eventType === 'message_revoked') {
+      const res = await recordMessageRevocation(db, payload);
+      return c.json({ ok: true, eventType: 'message_revoked', ...res }, 200);
+    }
+
+    if (payload.eventType === 'message_edited') {
+      const res = await recordMessageEdit(db, payload);
+      return c.json({ ok: true, eventType: 'message_edited', ...res }, 200);
     }
 
     return c.json({ error: { code: 'UNSUPPORTED_EVENT', message: 'Unknown QR bridge eventType.' } }, 400);

@@ -32,6 +32,9 @@ import {
   listConversations,
   addMessageToConversation,
   listConversationMessages,
+  getConversationMessageVersions,
+  getConversationAuditTimeline,
+  getSyncJobStatus,
   updateMessageStatus,
   importLegacyStateToOrg,
   checkAndRecordLoginAttempt,
@@ -617,6 +620,28 @@ export function createCrmRoutes() {
     const db = createDb(c.env.DB!);
     const items = await listConversationMessages(db, ctx, c.req.param('id'));
     return c.json({ items });
+  });
+
+  crm.get('/conversations/:id/messages/:messageId/versions', async (c) => {
+    const ctx = c.get('orgContext')!;
+    const db = createDb(c.env.DB!);
+    const versions = await getConversationMessageVersions(db, ctx, c.req.param('messageId'));
+    return c.json({ versions });
+  });
+
+  crm.get('/conversations/:id/audit', async (c) => {
+    const ctx = c.get('orgContext')!;
+    const db = createDb(c.env.DB!);
+    const timeline = await getConversationAuditTimeline(db, ctx, c.req.param('id'));
+    return c.json({ timeline });
+  });
+
+  crm.get('/sync/status', async (c) => {
+    const ctx = c.get('orgContext')!;
+    const db = createDb(c.env.DB!);
+    const whatsappAccountId = c.req.query('whatsappAccountId') || undefined;
+    const syncJob = await getSyncJobStatus(db, ctx, whatsappAccountId);
+    return c.json({ syncJob });
   });
 
   crm.post('/conversations/:id/messages', async (c) => {

@@ -1178,6 +1178,12 @@ export async function listConversations(
       unreadCount: conversations.unreadCount,
       lastMessagePreview: conversations.lastMessagePreview,
       lastMessageAt: conversations.lastMessageAt,
+      remoteJid: conversations.remoteJid,
+      isGroup: conversations.isGroup,
+      groupSubject: conversations.groupSubject,
+      profilePictureUrl: conversations.profilePictureUrl,
+      syncStatus: conversations.syncStatus,
+      lastSyncedAt: conversations.lastSyncedAt,
       createdAt: conversations.createdAt,
       updatedAt: conversations.updatedAt
     })

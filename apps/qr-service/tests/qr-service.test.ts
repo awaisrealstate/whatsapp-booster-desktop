@@ -174,6 +174,9 @@ describe('Node.js @wacrm/qr-service Encrypted Persistence, Isolation & Lifecycle
         (err: unknown) => err instanceof Error && /not connected/i.test(err.message)
       );
 
+      // Ensure async saveCreds has persisted to disk before reconnecting
+      await new Promise((r) => setTimeout(r, 60));
+
       // Reconnect reuses encrypted disk creds
       const reconnecting = await client.reconnectSession({ organizationId: 'org_1', whatsappAccountId: 'acc_1' });
       assert.equal(reconnecting.status, 'connecting');

@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, ne, or, sql } from 'drizzle-orm';
 import {
   isStopOptOutText,
   ProviderApiError,
@@ -20,6 +20,7 @@ import {
   contacts,
   conversations,
   messages,
+  messageMedia,
   templates,
   waQrSessions,
   webhookEvents,
@@ -1210,7 +1211,11 @@ export async function recordQrBridgeInboundMessage(db: AppDatabase, params: QrBr
     .where(
       and(
         eq(contacts.organizationId, params.organizationId),
-        eq(contacts.phone, normalizedPhone),
+        or(
+          eq(contacts.phone, normalizedPhone),
+          eq(contacts.phone, `+${normalizedPhone}`),
+          eq(contacts.rawPhone, params.fromPhone)
+        ),
         isNull(contacts.deletedAt)
       )
     )
@@ -1246,11 +1251,16 @@ export async function recordQrBridgeInboundMessage(db: AppDatabase, params: QrBr
     .where(
       and(
         eq(conversations.organizationId, params.organizationId),
-        eq(conversations.contactId, contactId),
+        params.remoteJid
+          ? or(eq(conversations.remoteJid, params.remoteJid), eq(conversations.contactId, contactId))
+          : eq(conversations.contactId, contactId),
         eq(conversations.channelType, 'unofficial_local_desktop')
       )
     )
     .limit(1);
+
+  const isGroup = Boolean(params.isGroup || params.remoteJid?.endsWith('@g.us'));
+  const isFromMe = Boolean(params.fromMe);
 
   let convId = convRows[0]?.id;
   const serviceWindowExpiresAt = params.timestampMs + 24 * 60 * 60 * 1000;
@@ -1264,8 +1274,11 @@ export async function recordQrBridgeInboundMessage(db: AppDatabase, params: QrBr
       whatsappAccountId: params.whatsappAccountId,
       channelType: 'unofficial_local_desktop',
       status: 'open',
+      remoteJid: params.remoteJid || null,
+      isGroup: isGroup ? 1 : 0,
+      groupSubject: isGroup ? (params.groupSubject || params.profileName || null) : null,
       serviceWindowExpiresAt,
-      unreadCount: 1,
+      unreadCount: isFromMe ? 0 : 1,
       lastMessagePreview: params.body.slice(0, 140),
       lastMessageAt: params.timestampMs,
       createdAt: now,
@@ -1276,8 +1289,11 @@ export async function recordQrBridgeInboundMessage(db: AppDatabase, params: QrBr
       .update(conversations)
       .set({
         whatsappAccountId: params.whatsappAccountId,
+        remoteJid: params.remoteJid || convRows[0]?.remoteJid || null,
+        isGroup: isGroup ? 1 : (convRows[0]?.isGroup ?? 0),
+        groupSubject: isGroup ? (params.groupSubject || convRows[0]?.groupSubject || null) : convRows[0]?.groupSubject,
         serviceWindowExpiresAt,
-        unreadCount: (convRows[0]?.unreadCount ?? 0) + 1,
+        unreadCount: isFromMe ? convRows[0]?.unreadCount ?? 0 : (convRows[0]?.unreadCount ?? 0) + 1,
         lastMessagePreview: params.body.slice(0, 140),
         lastMessageAt: params.timestampMs,
         status: 'open',
@@ -1286,23 +1302,57 @@ export async function recordQrBridgeInboundMessage(db: AppDatabase, params: QrBr
       .where(and(eq(conversations.organizationId, params.organizationId), eq(conversations.id, convId)));
   }
 
+  const msgId = crypto.randomUUID();
+  const direction = isFromMe ? 'outbound' : 'inbound';
+  const senderKind = isFromMe ? 'agent' : 'contact';
+  const msgType = (['text', 'image', 'video', 'audio', 'document'].includes(params.msgType || '')
+    ? params.msgType
+    : 'text') as 'text' | 'image' | 'video' | 'audio' | 'document';
+
   await db
     .insert(messages)
     .values({
-      id: crypto.randomUUID(),
+      id: msgId,
       organizationId: params.organizationId,
       conversationId: convId,
-      direction: 'inbound',
-      senderKind: 'contact',
-      msgType: 'text',
+      direction,
+      senderKind,
+      msgType,
       body: params.body,
       providerMessageId: params.providerMessageId,
-      idempotencyKey: `qr_in:${params.providerMessageId}`,
+      idempotencyKey: `qr_msg:${params.providerMessageId}`,
+      remoteJid: params.remoteJid || null,
+      senderPhone: params.fromPhone,
+      senderName: params.profileName || null,
+      mediaUrl: params.mediaUrl || null,
+      mediaMimeType: params.mediaMimeType || null,
+      mediaFilename: params.mediaFilename || null,
+      mediaSizeBytes: params.mediaSizeBytes || null,
       status: 'delivered',
+      source: 'whatsapp',
       createdAt: params.timestampMs,
       updatedAt: now
     })
     .onConflictDoNothing();
+
+  if (params.mediaUrl) {
+    await db
+      .insert(messageMedia)
+      .values({
+        id: crypto.randomUUID(),
+        organizationId: params.organizationId,
+        messageId: msgId,
+        providerMessageId: params.providerMessageId,
+        mediaType: msgType,
+        mimeType: params.mediaMimeType || null,
+        filePath: params.mediaUrl,
+        fileSize: params.mediaSizeBytes || null,
+        filename: params.mediaFilename || null,
+        caption: params.body || null,
+        createdAt: now
+      })
+      .onConflictDoNothing();
+  }
 
   const stopDetected = isStopOptOutText(params.body);
   if (stopDetected) {

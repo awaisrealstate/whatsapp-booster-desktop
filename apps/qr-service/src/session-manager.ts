@@ -1,11 +1,15 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import pino from 'pino';
 import QRCode from 'qrcode';
 import {
   Browsers,
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestWaWebVersion,
   makeWASocket,
+  proto,
   type AuthenticationState,
   type BaileysEventMap,
   type ConnectionState,
@@ -14,9 +18,11 @@ import {
 import {
   computeBridgeSignature,
   ProviderApiError,
+  type QrBridgeHistorySyncMessage,
   type QrBridgeInboundEvent,
   type QrBridgeSessionEvent,
   type QrBridgeStatus,
+  type QrBridgeWebhookPayload,
   type QrSessionSnapshot,
   type SendMessageResult
 } from '@wacrm/providers';
@@ -90,12 +96,97 @@ function extractMessageBody(msg: WAMessage): string | null {
   );
 }
 
+function getMediaDetails(msg: WAMessage): {
+  isMedia: boolean;
+  type: 'image' | 'video' | 'audio' | 'document' | 'other';
+  mimetype?: string;
+  filename?: string;
+  caption?: string;
+} {
+  const m = msg.message;
+  if (!m) return { isMedia: false, type: 'other' };
+  if (m.imageMessage) {
+    return {
+      isMedia: true,
+      type: 'image',
+      mimetype: m.imageMessage.mimetype || 'image/jpeg',
+      caption: m.imageMessage.caption || undefined
+    };
+  }
+  if (m.videoMessage) {
+    return {
+      isMedia: true,
+      type: 'video',
+      mimetype: m.videoMessage.mimetype || 'video/mp4',
+      caption: m.videoMessage.caption || undefined
+    };
+  }
+  if (m.audioMessage) {
+    return {
+      isMedia: true,
+      type: 'audio',
+      mimetype: m.audioMessage.mimetype || 'audio/ogg',
+      caption: undefined
+    };
+  }
+  if (m.documentMessage) {
+    return {
+      isMedia: true,
+      type: 'document',
+      mimetype: m.documentMessage.mimetype || 'application/octet-stream',
+      filename: m.documentMessage.fileName || undefined,
+      caption: m.documentMessage.caption || undefined
+    };
+  }
+  return { isMedia: false, type: 'other' };
+}
+
+async function downloadAndSaveMedia(
+  msg: WAMessage,
+  mediaDir: string,
+  organizationId: string,
+  whatsappAccountId: string
+): Promise<{ mediaUrl?: string; mediaMimeType?: string; mediaFilename?: string; mediaSizeBytes?: number }> {
+  try {
+    const details = getMediaDetails(msg);
+    if (!details.isMedia) return {};
+    const buffer = await downloadMediaMessage(msg, 'buffer', {});
+    if (!buffer || buffer.length === 0) return {};
+
+    const msgId = msg.key?.id || crypto.randomUUID();
+    let ext = 'bin';
+    if (details.type === 'image') ext = 'jpg';
+    else if (details.type === 'video') ext = 'mp4';
+    else if (details.type === 'audio') ext = 'ogg';
+    else if (details.type === 'document') {
+      const match = details.filename?.match(/\.([a-zA-Z0-9]+)$/);
+      ext = match ? match[1].toLowerCase() : 'pdf';
+    }
+
+    const filename = `${msgId}.${ext}`;
+    const targetDir = path.join(mediaDir, organizationId, whatsappAccountId);
+    await fs.promises.mkdir(targetDir, { recursive: true });
+    const filePath = path.join(targetDir, filename);
+    await fs.promises.writeFile(filePath, buffer);
+
+    return {
+      mediaUrl: `/media/${organizationId}/${whatsappAccountId}/${filename}`,
+      mediaMimeType: details.mimetype,
+      mediaFilename: details.filename || filename,
+      mediaSizeBytes: buffer.length
+    };
+  } catch {
+    return {};
+  }
+}
+
 export class QrSessionManager {
   private readonly store: EncryptedSessionStore;
   private readonly socketFactory: WaSocketFactory;
   private readonly qrTtlMs: number;
   private readonly bridgeSecret: string;
   private readonly webhookUrl: string | null;
+  private readonly mediaDir: string | null;
   private readonly fetchFn: typeof fetch;
   private readonly sessions = new Map<string, ManagedSession>();
   private readonly opLocks = new Map<string, Promise<unknown>>();
@@ -105,6 +196,7 @@ export class QrSessionManager {
     store: EncryptedSessionStore;
     bridgeSecret: string;
     webhookUrl?: string | null;
+    mediaDir?: string | null;
     qrTtlMs?: number;
     socketFactory?: WaSocketFactory;
     fetchFn?: typeof fetch;
@@ -112,6 +204,7 @@ export class QrSessionManager {
     this.store = options.store;
     this.bridgeSecret = options.bridgeSecret;
     this.webhookUrl = options.webhookUrl?.trim() || null;
+    this.mediaDir = options.mediaDir?.trim() || null;
     this.qrTtlMs = options.qrTtlMs ?? 60_000;
     this.fetchFn = options.fetchFn ?? ((input, init) => fetch(input, init));
     this.socketFactory =
@@ -132,7 +225,7 @@ export class QrSessionManager {
           logger: pino({ level: 'silent' }),
           printQRInTerminal: false,
           browser: Browsers.windows('WhatsApp Booster Pro'),
-          syncFullHistory: false,
+          syncFullHistory: true,
           markOnlineOnConnect: false
         }) as unknown as MinimalWaSocket;
       });
@@ -186,7 +279,7 @@ export class QrSessionManager {
     };
   }
 
-  private async postSignedWebhook(payload: QrBridgeSessionEvent | QrBridgeInboundEvent): Promise<void> {
+  private async postSignedWebhook(payload: QrBridgeWebhookPayload): Promise<void> {
     if (!this.webhookUrl) return;
     try {
       const url = new URL(this.webhookUrl);
@@ -399,35 +492,268 @@ export class QrSessionManager {
       }
     });
 
-    sock.ev.on('messages.upsert', async (upsert) => {
-      if (upsert.type !== 'notify') return;
-      for (const msg of upsert.messages ?? []) {
-        if (!msg.key || msg.key.fromMe) continue;
-        const primaryJid = msg.key.remoteJid ?? '';
-        const altJid = msg.key.remoteJidAlt ?? '';
-        const resolvedJid = primaryJid.endsWith('@s.whatsapp.net')
-          ? primaryJid
-          : altJid.endsWith('@s.whatsapp.net')
-            ? altJid
-            : '';
-        if (!resolvedJid) continue;
-        const body = extractMessageBody(msg);
-        if (!body) continue;
-        const fromPhone = extractPhoneFromJid(resolvedJid);
-        if (!fromPhone) continue;
+    // ── History Sync Listener ──────────────────────────────────────────────
+    sock.ev.on('messaging-history.set', async ({ chats, contacts, messages, isLatest, progress, syncType }) => {
+      try {
+        this.logger.info(
+          {
+            organizationId,
+            whatsappAccountId,
+            chatsCount: chats?.length ?? 0,
+            messagesCount: messages?.length ?? 0,
+            contactsCount: contacts?.length ?? 0,
+            isLatest
+          },
+          'Received Baileys messaging-history.set event'
+        );
 
-        const providerMessageId = msg.key.id || crypto.randomUUID();
-        await this.postSignedWebhook({
-          eventType: 'inbound_message',
-          eventId: `qr_${providerMessageId}`,
-          organizationId,
-          whatsappAccountId,
-          fromPhone,
-          profileName: msg.pushName ?? null,
-          providerMessageId,
-          body,
-          timestampMs: Date.now()
-        });
+        const mappedChats = (chats ?? []).map((c) => ({
+          id: c.id,
+          name: c.name || (c as { subject?: string }).subject || null,
+          unreadCount: c.unreadCount ?? 0,
+          lastMessageTimestamp: typeof c.conversationTimestamp === 'number' ? c.conversationTimestamp : null,
+          isGroup: Boolean(c.id?.endsWith('@g.us'))
+        }));
+
+        const mappedContacts = (contacts ?? []).map((c) => ({
+          id: c.id,
+          name: c.name || null,
+          notify: c.notify || null,
+          verifiedName: c.verifiedName || null
+        }));
+
+        const BATCH_SIZE = 50;
+        const rawMessages = messages ?? [];
+        const totalBatches = Math.max(1, Math.ceil(rawMessages.length / BATCH_SIZE));
+
+        for (let i = 0; i < totalBatches; i++) {
+          const chunk = rawMessages.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
+          const isLastBatch = i === totalBatches - 1;
+
+          const processedChunk: QrBridgeHistorySyncMessage[] = [];
+          for (const msg of chunk) {
+            if (!msg.key?.id || !msg.key?.remoteJid) continue;
+            const primaryJid = msg.key.remoteJid;
+            if (primaryJid === 'status@broadcast') continue;
+
+            const fromMe = Boolean(msg.key.fromMe);
+            const altJid = (msg.key as { remoteJidAlt?: string }).remoteJidAlt;
+            const effectiveJid = primaryJid.endsWith('@lid') && altJid?.endsWith('@s.whatsapp.net')
+              ? altJid
+              : primaryJid;
+            const participant = msg.key.participant || effectiveJid;
+            const senderPhone = extractPhoneFromJid(participant) || extractPhoneFromJid(effectiveJid);
+
+            const body = extractMessageBody(msg);
+            const details = getMediaDetails(msg);
+
+            let mediaInfo: { mediaUrl?: string; mediaMimeType?: string; mediaFilename?: string; mediaSizeBytes?: number } = {};
+            if (details.isMedia && this.mediaDir) {
+              mediaInfo = await downloadAndSaveMedia(msg, this.mediaDir, organizationId, whatsappAccountId);
+            }
+
+            const ts = typeof msg.messageTimestamp === 'number'
+              ? msg.messageTimestamp * 1000
+              : (msg.messageTimestamp as { low?: number } | undefined)?.low
+                ? (msg.messageTimestamp as { low: number }).low * 1000
+                : Date.now();
+
+            processedChunk.push({
+              providerMessageId: msg.key.id,
+              remoteJid: primaryJid,
+              fromMe,
+              senderPhone: senderPhone ? (senderPhone.startsWith('+') ? senderPhone : `+${senderPhone}`) : null,
+              senderName: msg.pushName || null,
+              body,
+              msgType: details.isMedia ? details.type : 'text',
+              mediaUrl: mediaInfo.mediaUrl,
+              mediaMimeType: mediaInfo.mediaMimeType,
+              mediaFilename: mediaInfo.mediaFilename,
+              mediaSizeBytes: mediaInfo.mediaSizeBytes,
+              timestampMs: ts
+            });
+          }
+
+          await this.postSignedWebhook({
+            eventType: 'history_sync',
+            eventId: `sync_${organizationId}_${whatsappAccountId}_${Date.now()}_${i}`,
+            organizationId,
+            whatsappAccountId,
+            syncType: typeof syncType === 'number' ? String(syncType) : (syncType || 'history_sync'),
+            progress: progress ?? (isLatest && isLastBatch ? 100 : Math.round(((i + 1) / totalBatches) * 100)),
+            isLatest: Boolean(isLatest && isLastBatch),
+            chats: i === 0 ? mappedChats : [],
+            contacts: i === 0 ? mappedContacts : [],
+            messages: processedChunk,
+            timestampMs: Date.now()
+          });
+        }
+      } catch (err) {
+        this.logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Error handling messaging-history.set');
+      }
+    });
+
+    // ── Incremental Chat Updates ───────────────────────────────────────────
+    sock.ev.on('chats.upsert', async (newChats) => {
+      try {
+        const mapped = (newChats ?? []).map((c) => ({
+          id: c.id,
+          name: c.name || null,
+          unreadCount: c.unreadCount ?? 0,
+          lastMessageTimestamp: typeof c.conversationTimestamp === 'number' ? c.conversationTimestamp : null,
+          isGroup: Boolean(c.id?.endsWith('@g.us'))
+        }));
+        if (mapped.length > 0) {
+          await this.postSignedWebhook({
+            eventType: 'history_sync',
+            eventId: `chats_${Date.now()}`,
+            organizationId,
+            whatsappAccountId,
+            isLatest: false,
+            chats: mapped,
+            messages: [],
+            timestampMs: Date.now()
+          });
+        }
+      } catch {}
+    });
+
+    // ── Inbound & Outbound Live Message Upsert ──────────────────────────────
+    sock.ev.on('messages.upsert', async (upsert) => {
+      try {
+        for (const msg of upsert.messages ?? []) {
+          if (!msg.key?.id || !msg.key?.remoteJid) continue;
+          const primaryJid = msg.key.remoteJid;
+          if (primaryJid === 'status@broadcast') continue;
+
+          // Check for revoke (anti-delete) or edit protocol message
+          const protoMsg = msg.message?.protocolMessage;
+          if (protoMsg) {
+            if (protoMsg.type === proto.Message.ProtocolMessage.Type.REVOKE && protoMsg.key?.id) {
+              await this.postSignedWebhook({
+                eventType: 'message_revoked',
+                eventId: `rev_${protoMsg.key.id}_${Date.now()}`,
+                organizationId,
+                whatsappAccountId,
+                providerMessageId: protoMsg.key.id,
+                remoteJid: primaryJid,
+                deletedByJid: protoMsg.key.participant || primaryJid,
+                deletedAtMs: Date.now()
+              });
+              continue;
+            }
+            if (
+              protoMsg.type === proto.Message.ProtocolMessage.Type.MESSAGE_EDIT &&
+              protoMsg.key?.id &&
+              protoMsg.editedMessage
+            ) {
+              const newBody = extractMessageBody({ message: protoMsg.editedMessage } as WAMessage) || '';
+              await this.postSignedWebhook({
+                eventType: 'message_edited',
+                eventId: `edit_${protoMsg.key.id}_${Date.now()}`,
+                organizationId,
+                whatsappAccountId,
+                providerMessageId: protoMsg.key.id,
+                remoteJid: primaryJid,
+                newBody,
+                editedAtMs: Date.now()
+              });
+              continue;
+            }
+          }
+
+          const fromMe = Boolean(msg.key.fromMe);
+          const body = extractMessageBody(msg);
+          const details = getMediaDetails(msg);
+
+          if (!body && !details.isMedia) continue;
+
+          let mediaInfo: { mediaUrl?: string; mediaMimeType?: string; mediaFilename?: string; mediaSizeBytes?: number } = {};
+          if (details.isMedia && this.mediaDir) {
+            mediaInfo = await downloadAndSaveMedia(msg, this.mediaDir, organizationId, whatsappAccountId);
+          }
+
+          const isGroup = primaryJid.endsWith('@g.us');
+          const altJid = (msg.key as { remoteJidAlt?: string }).remoteJidAlt;
+          const effectiveJid = primaryJid.endsWith('@lid') && altJid?.endsWith('@s.whatsapp.net')
+            ? altJid
+            : primaryJid;
+          const participant = msg.key.participant || effectiveJid;
+          const fromPhone = extractPhoneFromJid(participant) || extractPhoneFromJid(effectiveJid) || primaryJid;
+          const providerMessageId = msg.key.id;
+
+          const ts = typeof msg.messageTimestamp === 'number'
+            ? msg.messageTimestamp * 1000
+            : (msg.messageTimestamp as { low?: number } | undefined)?.low
+              ? (msg.messageTimestamp as { low: number }).low * 1000
+              : Date.now();
+
+          await this.postSignedWebhook({
+            eventType: 'inbound_message',
+            eventId: `qr_${providerMessageId}`,
+            organizationId,
+            whatsappAccountId,
+            fromPhone: fromPhone.startsWith('+') ? fromPhone : `+${fromPhone}`,
+            profileName: msg.pushName ?? null,
+            providerMessageId,
+            body: body || (details.isMedia ? `[${details.type}]` : ''),
+            timestampMs: ts,
+            remoteJid: primaryJid,
+            isGroup,
+            fromMe,
+            msgType: details.isMedia ? details.type : 'text',
+            mediaUrl: mediaInfo.mediaUrl,
+            mediaMimeType: mediaInfo.mediaMimeType,
+            mediaFilename: mediaInfo.mediaFilename,
+            mediaSizeBytes: mediaInfo.mediaSizeBytes
+          });
+        }
+      } catch (err) {
+        this.logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Error handling messages.upsert');
+      }
+    });
+
+    // ── Live Message Updates (Revokes & Edits) ──────────────────────────────
+    sock.ev.on('messages.update', async (updates) => {
+      try {
+        for (const update of updates ?? []) {
+          const key = update.key;
+          if (!key?.id) continue;
+          const updateMsg = (update as { update?: { message?: proto.IMessage } }).update?.message;
+          const protoMsg = updateMsg?.protocolMessage;
+          if (protoMsg) {
+            if (protoMsg.type === proto.Message.ProtocolMessage.Type.REVOKE && protoMsg.key?.id) {
+              await this.postSignedWebhook({
+                eventType: 'message_revoked',
+                eventId: `rev_${protoMsg.key.id}_${Date.now()}`,
+                organizationId,
+                whatsappAccountId,
+                providerMessageId: protoMsg.key.id,
+                remoteJid: key.remoteJid,
+                deletedByJid: protoMsg.key.participant || key.remoteJid,
+                deletedAtMs: Date.now()
+              });
+            } else if (
+              protoMsg.type === proto.Message.ProtocolMessage.Type.MESSAGE_EDIT &&
+              protoMsg.key?.id &&
+              protoMsg.editedMessage
+            ) {
+              const newBody = extractMessageBody({ message: protoMsg.editedMessage } as WAMessage) || '';
+              await this.postSignedWebhook({
+                eventType: 'message_edited',
+                eventId: `edit_${protoMsg.key.id}_${Date.now()}`,
+                organizationId,
+                whatsappAccountId,
+                providerMessageId: protoMsg.key.id,
+                remoteJid: key.remoteJid,
+                newBody,
+                editedAtMs: Date.now()
+              });
+            }
+          }
+        }
+      } catch (err) {
+        this.logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Error handling messages.update');
       }
     });
 

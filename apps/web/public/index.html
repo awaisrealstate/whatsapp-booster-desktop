@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WhatsApp Booster Pro â€” Cloud CRM, AI & Campaign Platform</title>
+  <title>WhatsApp Booster Pro &mdash; Cloud CRM, AI &amp; Campaign Platform</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -12,7 +12,7 @@
       <div class="brand-logo">WA</div>
       <div class="brand-text">
         <h1>WhatsApp Booster Pro <span class="badge-pill" id="plan-badge">SAAS</span></h1>
-        <span class="badge-stealth" id="org-subtitle">Official Meta Cloud API Â· AI Support Â· Multi-Tenant SaaS</span>
+        <span class="badge-stealth" id="org-subtitle">Official Meta Cloud API &middot; AI Support &middot; Multi-Tenant SaaS</span>
       </div>
     </div>
 
@@ -62,17 +62,17 @@
 
     <!-- Login / Registration Form (Visible when not signed in) -->
     <div id="dev-login-panel" class="dev-login-panel" style="display:flex;">
-      <input type="email" id="login-email" class="input-modern" placeholder="Email (e.g. user@example.com)" />
-      <input type="password" id="login-password" class="input-modern" placeholder="Password (min 8 chars)" />
+      <input type="email" id="login-email" class="input-modern" placeholder="Email (e.g. test@local.dev)" />
+      <input type="password" id="login-password" class="input-modern" placeholder="Password (min 8 chars, e.g. TestPass123!)" />
       <button class="btn-primary" id="btn-dev-login" type="button">Sign In</button>
       <button class="btn-secondary" id="btn-dev-register" type="button">Create Account</button>
       <button class="btn-secondary" id="btn-oauth-google" type="button">Google OAuth2</button>
       <button class="btn-secondary" id="btn-oauth-github" type="button">GitHub OAuth2</button>
       <span class="muted-note" style="font-size:11px; width:100%;">
-        🔒 All credentials, WhatsApp connections, chats, and options are stored permanently in the database and restored automatically on refresh.
+        🔒 All credentials, WhatsApp connections, chats, and options are stored permanently in the database and restored automatically on refresh. (Dev default: test@local.dev / TestPass123!)
       </span>
     </div>
-    <div id="global-banner" class="banner" style="display:none;"></div>
+    <div id="global-banner" class="banner" style="display:none; margin-top:6px;"></div>
   </section>
 
   <div class="app-shell">
@@ -247,19 +247,25 @@
       <section class="view-panel" id="view-conversations">
         <div class="grid-inbox">
           <div class="dash-card">
-            <div class="card-title"><h3>Active Threads</h3></div>
+            <div class="card-title"><h3>WhatsApp Web Inbox &amp; Permanent Archive</h3></div>
+            <div id="sync-progress-banner" class="info-box" style="display:none; margin-bottom: 10px; font-size: 12px; background: rgba(0, 168, 132, 0.15); border: 1px solid rgba(0, 168, 132, 0.3);">
+              <span>⚡ Chat History Sync: <strong id="sync-progress-text">Synchronizing chats...</strong></span>
+            </div>
             <div class="inbox-filter-controls" style="margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px;">
-              <input type="text" id="conv-search-input" class="input-modern" placeholder="🔍 Search name or phone..." style="width: 100%;" />
+              <input type="text" id="conv-search-input" class="input-modern" placeholder="🔍 Search name, phone, or group..." style="width: 100%;" />
               <div style="display: flex; gap: 6px; align-items: center;">
                 <label for="conv-filter-select" class="muted-note" style="font-size: 11px; white-space: nowrap;">Filter:</label>
                 <select id="conv-filter-select" class="input-modern" style="padding: 4px 8px; font-size: 12px; width: 100%;">
                   <option value="all">All Conversations</option>
+                  <option value="unread">Unread Only</option>
+                  <option value="groups">Groups Only 👥</option>
                   <option value="my">My Conversations</option>
                   <option value="owner">Owner Assigned</option>
                   <option value="ai">AI Handling</option>
                   <option value="human">Human Handling</option>
                   <option value="unassigned">Unassigned</option>
                   <option value="needs_attention">Needs Human Attention ⚠️</option>
+                  <option value="archived">Archived</option>
                   <option value="resolved">Resolved</option>
                 </select>
               </div>
@@ -276,9 +282,16 @@
               <div class="row-actions" id="active-conv-badges">
                 <span class="badge-tag" id="active-conv-status">--</span>
                 <span class="badge-tag" id="active-conv-mode" style="display:none;">--</span>
+                <button class="btn-secondary" id="btn-toggle-timeline" style="font-size: 11px; padding: 4px 8px;">📜 Audit Timeline</button>
                 <button class="btn-secondary" id="btn-analyze-leads" style="display:none; font-size: 11px; padding: 4px 8px;">🧠 Lead Intel (Gemini)</button>
                 <button class="btn-secondary" id="btn-conv-handoff" style="display:none;">Transfer to Human</button>
               </div>
+            </div>
+
+            <!-- ACTIVITY & AUDIT TIMELINE DRAWER -->
+            <div id="conv-audit-timeline-drawer" style="display:none; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 12px; max-height: 180px; overflow-y: auto;">
+              <div style="font-weight: 600; margin-bottom: 6px; color: #a0aec0;">Conversation Audit &amp; Event History</div>
+              <div id="conv-audit-entries">No audit events recorded for this conversation.</div>
             </div>
 
             <!-- LEAD INTELLIGENCE CARD -->
@@ -955,6 +968,17 @@
         </div>
       </section>
     </main>
+  </div>
+
+  <!-- Message Edit History Modal -->
+  <div id="versions-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center;">
+    <div style="background:#202c33; border:1px solid rgba(255,255,255,0.15); border-radius:10px; width:90%; max-width:500px; padding:20px; box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h3 style="margin:0; font-size:16px;">Message Edit History</h3>
+        <button type="button" id="btn-close-versions-modal" class="btn-secondary" style="padding:2px 8px; font-size:12px;">✕</button>
+      </div>
+      <div id="versions-modal-content" style="max-height:300px; overflow-y:auto; font-size:13px;"></div>
+    </div>
   </div>
 
   <script type="module" src="./app.js"></script>

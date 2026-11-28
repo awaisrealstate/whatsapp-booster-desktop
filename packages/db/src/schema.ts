@@ -376,12 +376,19 @@ export const conversations = sqliteTable(
     unreadCount: integer('unread_count').notNull().default(0),
     lastMessagePreview: text('last_message_preview'),
     lastMessageAt: integer('last_message_at'),
+    remoteJid: text('remote_jid'),
+    isGroup: integer('is_group').notNull().default(0),
+    groupSubject: text('group_subject'),
+    profilePictureUrl: text('profile_picture_url'),
+    syncStatus: text('sync_status').notNull().default('synced'),
+    lastSyncedAt: integer('last_synced_at'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull()
   },
   (table) => [
     index('idx_conv_org_inbox').on(table.organizationId, table.status, table.lastMessageAt),
-    index('idx_conv_org_contact').on(table.organizationId, table.contactId)
+    index('idx_conv_org_contact').on(table.organizationId, table.contactId),
+    index('idx_conv_remote_jid').on(table.organizationId, table.remoteJid)
   ]
 );
 
@@ -404,6 +411,18 @@ export const messages = sqliteTable(
     idempotencyKey: text('idempotency_key'),
     status: text('status').$type<MessageStatus>().notNull().default('pending'),
     errorMessage: text('error_message'),
+    isDeletedOnWhatsapp: integer('is_deleted_on_whatsapp').notNull().default(0),
+    whatsappDeletedAt: integer('whatsapp_deleted_at'),
+    isEdited: integer('is_edited').notNull().default(0),
+    editedAt: integer('edited_at'),
+    mediaUrl: text('media_url'),
+    mediaMimeType: text('media_mime_type'),
+    mediaFilename: text('media_filename'),
+    mediaSizeBytes: integer('media_size_bytes'),
+    senderPhone: text('sender_phone'),
+    senderName: text('sender_name'),
+    remoteJid: text('remote_jid'),
+    source: text('source').default('whatsapp'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull()
   },
@@ -412,7 +431,8 @@ export const messages = sqliteTable(
     uniqueIndex('idx_msg_org_idempotency')
       .on(table.organizationId, table.idempotencyKey)
       .where(sql`${table.idempotencyKey} IS NOT NULL`),
-    index('idx_msg_org_status').on(table.organizationId, table.status)
+    index('idx_msg_org_status').on(table.organizationId, table.status),
+    index('idx_msg_org_pmid').on(table.organizationId, table.providerMessageId)
   ]
 );
 
@@ -941,5 +961,123 @@ export const conversationAssignmentHistory = sqliteTable(
   },
   (table) => [
     index('idx_conv_assign_hist').on(table.organizationId, table.conversationId, table.createdAt)
+  ]
+);
+
+// ── Complete WhatsApp Chat History Sync & Permanent CRM Archive ──────────────
+
+export const messageVersions = sqliteTable(
+  'message_versions',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    messageId: text('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    providerMessageId: text('provider_message_id'),
+    body: text('body'),
+    mediaUrl: text('media_url'),
+    versionNumber: integer('version_number').notNull().default(1),
+    editedAt: integer('edited_at').notNull(),
+    createdAt: integer('created_at').notNull()
+  },
+  (table) => [
+    index('idx_msg_versions_msg').on(table.organizationId, table.messageId, table.versionNumber)
+  ]
+);
+
+export const messageDeletionEvents = sqliteTable(
+  'message_deletion_events',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    conversationId: text('conversation_id').references(() => conversations.id, { onDelete: 'cascade' }),
+    messageId: text('message_id').references(() => messages.id, { onDelete: 'cascade' }),
+    providerMessageId: text('provider_message_id').notNull(),
+    deletedByJid: text('deleted_by_jid'),
+    deletionType: text('deletion_type').notNull().default('revoke'),
+    deletedAt: integer('deleted_at').notNull(),
+    rawEventJson: text('raw_event_json'),
+    createdAt: integer('created_at').notNull()
+  },
+  (table) => [
+    index('idx_msg_deletion_events_msg').on(table.organizationId, table.messageId),
+    index('idx_msg_deletion_events_pmid').on(table.organizationId, table.providerMessageId)
+  ]
+);
+
+export const messageSyncJobs = sqliteTable(
+  'message_sync_jobs',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    whatsappAccountId: text('whatsapp_account_id')
+      .notNull()
+      .references(() => whatsappAccounts.id, { onDelete: 'cascade' }),
+    status: text('status').notNull().default('in_progress'),
+    syncType: text('sync_type').notNull().default('history_sync'),
+    chatsSynced: integer('chats_synced').notNull().default(0),
+    messagesSynced: integer('messages_synced').notNull().default(0),
+    contactsSynced: integer('contacts_synced').notNull().default(0),
+    isLatest: integer('is_latest').notNull().default(0),
+    progress: integer('progress'),
+    errorMessage: text('error_message'),
+    startedAt: integer('started_at').notNull(),
+    completedAt: integer('completed_at'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [
+    index('idx_msg_sync_jobs_org_acc').on(table.organizationId, table.whatsappAccountId, table.createdAt)
+  ]
+);
+
+export const messageMedia = sqliteTable(
+  'message_media',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    messageId: text('message_id').references(() => messages.id, { onDelete: 'cascade' }),
+    providerMessageId: text('provider_message_id'),
+    mediaType: text('media_type').notNull(),
+    mimeType: text('mime_type'),
+    filePath: text('file_path').notNull(),
+    fileSize: integer('file_size'),
+    fileHash: text('file_hash'),
+    filename: text('filename'),
+    caption: text('caption'),
+    createdAt: integer('created_at').notNull()
+  },
+  (table) => [
+    index('idx_message_media_org_msg').on(table.organizationId, table.messageId)
+  ]
+);
+
+export const conversationAuditLogs = sqliteTable(
+  'conversation_audit_logs',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    conversationId: text('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    actorType: text('actor_type').notNull(),
+    actorId: text('actor_id'),
+    action: text('action').notNull(),
+    metadataJson: text('metadata_json'),
+    createdAt: integer('created_at').notNull()
+  },
+  (table) => [
+    index('idx_conv_audit_logs_conv').on(table.organizationId, table.conversationId, table.createdAt)
   ]
 );

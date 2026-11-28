@@ -121,6 +121,81 @@ export interface QrBridgeInboundEvent {
   providerMessageId: string;
   body: string;
   timestampMs: number;
+  remoteJid?: string | null;
+  isGroup?: boolean;
+  groupSubject?: string | null;
+  fromMe?: boolean;
+  msgType?: 'text' | 'image' | 'video' | 'audio' | 'document' | 'other';
+  mediaUrl?: string | null;
+  mediaMimeType?: string | null;
+  mediaFilename?: string | null;
+  mediaSizeBytes?: number | null;
+}
+
+export interface QrBridgeHistorySyncChat {
+  id: string;
+  name?: string | null;
+  unreadCount?: number;
+  lastMessageTimestamp?: number | null;
+  isGroup?: boolean;
+}
+
+export interface QrBridgeHistorySyncContact {
+  id: string;
+  name?: string | null;
+  notify?: string | null;
+  verifiedName?: string | null;
+}
+
+export interface QrBridgeHistorySyncMessage {
+  providerMessageId: string;
+  remoteJid: string;
+  fromMe: boolean;
+  senderPhone?: string | null;
+  senderName?: string | null;
+  body: string | null;
+  msgType: 'text' | 'image' | 'video' | 'audio' | 'document' | 'other';
+  mediaUrl?: string | null;
+  mediaMimeType?: string | null;
+  mediaFilename?: string | null;
+  mediaSizeBytes?: number | null;
+  timestampMs: number;
+}
+
+export interface QrBridgeHistorySyncEvent {
+  eventType: 'history_sync';
+  eventId: string;
+  organizationId: string;
+  whatsappAccountId: string;
+  syncType?: string | null;
+  progress?: number | null;
+  isLatest?: boolean;
+  chats: QrBridgeHistorySyncChat[];
+  contacts?: QrBridgeHistorySyncContact[];
+  messages: QrBridgeHistorySyncMessage[];
+  timestampMs: number;
+}
+
+export interface QrBridgeMessageRevokedEvent {
+  eventType: 'message_revoked';
+  eventId: string;
+  organizationId: string;
+  whatsappAccountId: string;
+  providerMessageId: string;
+  remoteJid?: string | null;
+  deletedByJid?: string | null;
+  deletedAtMs: number;
+}
+
+export interface QrBridgeMessageEditedEvent {
+  eventType: 'message_edited';
+  eventId: string;
+  organizationId: string;
+  whatsappAccountId: string;
+  providerMessageId: string;
+  remoteJid?: string | null;
+  newBody: string;
+  editedAtMs: number;
 }
 
 export interface QrBridgeSessionEvent {
@@ -135,7 +210,12 @@ export interface QrBridgeSessionEvent {
   lastError?: string | null;
 }
 
-export type QrBridgeWebhookPayload = QrBridgeSessionEvent | QrBridgeInboundEvent;
+export type QrBridgeWebhookPayload =
+  | QrBridgeSessionEvent
+  | QrBridgeInboundEvent
+  | QrBridgeHistorySyncEvent
+  | QrBridgeMessageRevokedEvent
+  | QrBridgeMessageEditedEvent;
 
 export interface WhatsAppProvider {
   readonly providerType: ProviderType;

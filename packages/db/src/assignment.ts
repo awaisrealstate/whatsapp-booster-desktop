@@ -60,6 +60,12 @@ export async function getConversationById(
       unreadCount: conversations.unreadCount,
       lastMessagePreview: conversations.lastMessagePreview,
       lastMessageAt: conversations.lastMessageAt,
+      remoteJid: conversations.remoteJid,
+      isGroup: conversations.isGroup,
+      groupSubject: conversations.groupSubject,
+      profilePictureUrl: conversations.profilePictureUrl,
+      syncStatus: conversations.syncStatus,
+      lastSyncedAt: conversations.lastSyncedAt,
       createdAt: conversations.createdAt,
       updatedAt: conversations.updatedAt,
       contactName: contacts.name,
@@ -318,7 +324,7 @@ export async function listConversationAssignmentHistory(
 }
 
 export interface ListFilteredConversationsParams {
-  filter?: 'all' | 'my' | 'owner' | 'ai' | 'human' | 'unassigned' | 'needs_attention' | 'resolved';
+  filter?: 'all' | 'my' | 'owner' | 'ai' | 'human' | 'unassigned' | 'needs_attention' | 'resolved' | 'unread' | 'groups' | 'archived';
   search?: string;
   status?: ConversationStatus;
   limit?: number;
@@ -336,7 +342,7 @@ export async function listFilteredConversations(
     conditions.push(eq(conversations.status, params.status));
   }
 
-  // Handler/Assignment filter
+  // Handler/Assignment and category filter
   if (params.filter === 'my') {
     conditions.push(eq(conversations.assignedUserId, ctx.userId));
   } else if (params.filter === 'owner') {
@@ -379,6 +385,12 @@ export async function listFilteredConversations(
         eq(conversations.handlingStatus, 'resolved')
       )!
     );
+  } else if (params.filter === 'unread') {
+    conditions.push(sql`${conversations.unreadCount} > 0`);
+  } else if (params.filter === 'groups') {
+    conditions.push(eq(conversations.isGroup, 1));
+  } else if (params.filter === 'archived') {
+    conditions.push(eq(conversations.status, 'archived'));
   }
 
   const rows = await db
@@ -399,6 +411,12 @@ export async function listFilteredConversations(
       unreadCount: conversations.unreadCount,
       lastMessagePreview: conversations.lastMessagePreview,
       lastMessageAt: conversations.lastMessageAt,
+      remoteJid: conversations.remoteJid,
+      isGroup: conversations.isGroup,
+      groupSubject: conversations.groupSubject,
+      profilePictureUrl: conversations.profilePictureUrl,
+      syncStatus: conversations.syncStatus,
+      lastSyncedAt: conversations.lastSyncedAt,
       createdAt: conversations.createdAt,
       updatedAt: conversations.updatedAt
     })
@@ -415,7 +433,8 @@ export async function listFilteredConversations(
     return rows.filter(
       (r) =>
         (r.contactName && r.contactName.toLowerCase().includes(q)) ||
-        (r.contactPhone && r.contactPhone.includes(q))
+        (r.contactPhone && r.contactPhone.includes(q)) ||
+        (r.groupSubject && r.groupSubject.toLowerCase().includes(q))
     );
   }
 
