@@ -29,6 +29,7 @@ export function restrictedCors(): MiddlewareHandler<{ Bindings: WorkerBindings }
       c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
       c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Organization-Id');
       c.header('Access-Control-Expose-Headers', 'X-Request-Id');
+      c.header('Access-Control-Allow-Private-Network', 'true');
       c.header('Access-Control-Max-Age', '600');
       return c.body(null, 204);
     }
@@ -40,6 +41,7 @@ export function restrictedCors(): MiddlewareHandler<{ Bindings: WorkerBindings }
       c.header('Vary', 'Origin');
       c.header('Access-Control-Allow-Credentials', 'true');
       c.header('Access-Control-Expose-Headers', 'X-Request-Id');
+      c.header('Access-Control-Allow-Private-Network', 'true');
     }
   };
 }
