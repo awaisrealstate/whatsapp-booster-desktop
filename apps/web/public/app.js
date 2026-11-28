@@ -157,8 +157,20 @@ function showBanner(msg, isError = false) {
   el.style.display = 'block';
 }
 
+function getEffectiveApiBase() {
+  const envSel = document.getElementById('select-api-env');
+  if (envSel && envSel.value && envSel.value !== 'custom') {
+    return envSel.value.replace(/\/+$/, '');
+  }
+  const inputApi = document.getElementById('input-api-base');
+  if (inputApi && inputApi.value.trim()) {
+    return inputApi.value.trim().replace(/\/+$/, '');
+  }
+  return (state.apiBase || 'http://127.0.0.1:8787').replace(/\/+$/, '');
+}
+
 async function apiFetch(path, options = {}) {
-  const base = state.apiBase.replace(/\/+$/, '');
+  const base = getEffectiveApiBase();
   const headers = { ...(options.headers || {}) };
   if (state.token) {
     headers.Authorization = `Bearer ${state.token}`;
@@ -1069,8 +1081,10 @@ function captureOAuthHashToken() {
 }
 
 function wireEvents() {
-  document.getElementById('input-api-base').value = state.apiBase;
-  document.getElementById('input-bearer-token').value = state.token;
+  const inApi = document.getElementById('input-api-base');
+  if (inApi) inApi.value = state.apiBase;
+  const inTok = document.getElementById('input-bearer-token');
+  if (inTok) inTok.value = state.token;
 
   // Environment Selector
   const envSel = document.getElementById('select-api-env');
@@ -1092,9 +1106,11 @@ function wireEvents() {
       }
       state.apiBase = val;
       if (typeof localStorage !== 'undefined') localStorage.setItem('wacrm_api_base', val);
-      document.getElementById('input-api-base').value = val;
-      showBanner(`API Base switched to ${val}. Reloading...`);
-      await refreshAllData();
+      if (inApi) inApi.value = val;
+      showBanner(`API environment switched to ${val}.`);
+      if (state.token) {
+        await refreshAllData();
+      }
     });
   }
 
@@ -1121,18 +1137,20 @@ function wireEvents() {
     });
   }
 
-  document.getElementById('btn-save-connection').addEventListener('click', () => {
-    state.apiBase = document.getElementById('input-api-base').value.trim();
-    state.token = document.getElementById('input-bearer-token').value.trim();
-    localStorage.setItem('wacrm_api_base', state.apiBase);
-    localStorage.setItem('wacrm_bearer_token', state.token);
+  document.getElementById('btn-save-connection')?.addEventListener('click', () => {
+    state.apiBase = getEffectiveApiBase();
+    state.token = document.getElementById('input-bearer-token')?.value?.trim() || '';
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('wacrm_api_base', state.apiBase);
+      localStorage.setItem('wacrm_bearer_token', state.token);
+    }
     refreshAllData();
   });
 
   for (const prov of ['google', 'github']) {
-    document.getElementById(`btn-oauth-${prov}`).addEventListener('click', async () => {
-      const base = document.getElementById('input-api-base').value.trim().replace(/\/+$/, '');
-      localStorage.setItem('wacrm_api_base', base);
+    document.getElementById(`btn-oauth-${prov}`)?.addEventListener('click', async () => {
+      const base = getEffectiveApiBase();
+      if (typeof localStorage !== 'undefined') localStorage.setItem('wacrm_api_base', base);
 
       // Pre-check provider configuration before leaving page
       try {
@@ -1155,7 +1173,7 @@ function wireEvents() {
     });
   }
 
-  document.getElementById('select-active-org').addEventListener('change', async (e) => {
+  document.getElementById('select-active-org')?.addEventListener('change', async (e) => {
     const organizationId = e.target.value;
     if (!organizationId || organizationId === state.organization?.id) return;
     try {
@@ -1166,27 +1184,28 @@ function wireEvents() {
     }
   });
 
-  document.getElementById('btn-toggle-dev-login').addEventListener('click', () => {
-    const p = document.getElementById('dev-login-panel');
-    p.style.display = p.style.display === 'none' ? 'flex' : 'none';
-  });
-
-  document.getElementById('btn-dev-login').addEventListener('click', async () => {
+  document.getElementById('btn-dev-login')?.addEventListener('click', async () => {
     try {
-      state.apiBase = document.getElementById('input-api-base').value.trim();
+      state.apiBase = getEffectiveApiBase();
+      const email = document.getElementById('login-email')?.value?.trim() || '';
+      const password = document.getElementById('login-password')?.value || '';
+      if (!email || !password) {
+        return showBanner('Please enter your email and password.', true);
+      }
+      showBanner('Signing in...');
       const res = await apiFetch('/api/v1/auth/login', {
         method: 'POST',
-        body: JSON.stringify({
-          email: document.getElementById('login-email').value.trim(),
-          password: document.getElementById('login-password').value,
-          clientType: 'web'
-        })
+        body: JSON.stringify({ email, password, clientType: 'web' })
       });
       state.token = res.token;
-      document.getElementById('input-bearer-token').value = res.token;
-      localStorage.setItem('wacrm_api_base', state.apiBase);
-      localStorage.setItem('wacrm_bearer_token', res.token);
+      const tokInput = document.getElementById('input-bearer-token');
+      if (tokInput) tokInput.value = res.token;
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('wacrm_api_base', state.apiBase);
+        localStorage.setItem('wacrm_bearer_token', res.token);
+      }
       await refreshAllData();
+      showBanner('Signed in successfully.');
     } catch (err) {
       showBanner(err.message, true);
     }
@@ -1194,27 +1213,31 @@ function wireEvents() {
 
   document.getElementById('btn-dev-register')?.addEventListener('click', async () => {
     try {
-      state.apiBase = document.getElementById('input-api-base').value.trim();
-      const email = document.getElementById('login-email').value.trim();
-      const password = document.getElementById('login-password').value;
+      state.apiBase = getEffectiveApiBase();
+      const email = document.getElementById('login-email')?.value?.trim() || '';
+      const password = document.getElementById('login-password')?.value || '';
       if (!email || password.length < 8) {
-        return showBanner('Enter a valid email and password (at least 8 characters) to register locally.', true);
+        return showBanner('Enter a valid email and password (at least 8 characters) to create an account.', true);
       }
+      showBanner('Creating account...');
       const res = await apiFetch('/api/v1/auth/register', {
         method: 'POST',
         body: JSON.stringify({
           email,
-          name: email.split('@')[0] || 'Local User',
+          name: email.split('@')[0] || 'User',
           password,
           clientType: 'web'
         })
       });
       state.token = res.token;
-      document.getElementById('input-bearer-token').value = res.token;
-      localStorage.setItem('wacrm_api_base', state.apiBase);
-      localStorage.setItem('wacrm_bearer_token', res.token);
+      const tokInput = document.getElementById('input-bearer-token');
+      if (tokInput) tokInput.value = res.token;
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('wacrm_api_base', state.apiBase);
+        localStorage.setItem('wacrm_bearer_token', res.token);
+      }
       await refreshAllData();
-      showBanner('Local dev account created and signed in. You can now click Generate QR Code.');
+      showBanner('Account created and signed in successfully!');
     } catch (err) {
       showBanner(err.message, true);
     }
@@ -1230,8 +1253,8 @@ function wireEvents() {
     showBanner('Signed out successfully.');
   });
 
-  document.getElementById('btn-refresh-all').addEventListener('click', refreshAllData);
-  document.getElementById('btn-search-contacts').addEventListener('click', refreshAllData);
+  document.getElementById('btn-refresh-all')?.addEventListener('click', refreshAllData);
+  document.getElementById('btn-search-contacts')?.addEventListener('click', refreshAllData);
 
   async function syncQrStatusOnce(accountId) {
     if (!accountId) return;
